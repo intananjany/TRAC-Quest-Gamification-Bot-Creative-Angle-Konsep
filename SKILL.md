@@ -215,6 +215,21 @@ SC‑Bridge exposes sidechannel messages over WebSocket and accepts inbound comm
 It is the **primary way for agents to read and place sidechannel messages**. TTY control works, too but may not be feasible.
 **Important:** These are **WebSocket JSON** commands. Do **not** type them into the TTY.
 
+### Auth + Enablement (Mandatory)
+- **Auth is required**. Start with `--sc-bridge-token <token>` and send `{ "type":"auth", "token":"..." }` first.
+- **CLI mirroring is disabled by default**. Enable with `--sc-bridge-cli 1`.
+- Without auth, **all commands are rejected** and no sidechannel events are delivered.
+
+**Token generation (recommended)**
+Generate a strong random token and pass it via `--sc-bridge-token`:
+```bash
+openssl rand -hex 32
+```
+Then start with:
+```bash
+--sc-bridge-token <generated-token>
+```
+
 ### Quick Usage (Send + Read)
 1) **Connect** to the bridge (default): `ws://127.0.0.1:49222`  
 2) **Read**: listen for `sidechannel_message` events.  
@@ -235,6 +250,15 @@ If a token is set, authenticate first:
 { "type": "auth", "token": "YOUR_TOKEN" }
 ```
 All WebSocket commands require auth (no exceptions).
+
+### Full CLI Mirroring (Dynamic)
+SC‑Bridge can execute **every TTY command** via:
+```json
+{ "type": "cli", "command": "/any_tty_command_here" }
+```
+- This is **dynamic**: any custom commands you add in `protocol.js` are automatically available.
+- Use this when you need **full parity** with interactive mode (admin ops, txs, chat moderation, etc.).
+- **Security:** commands like `/exit` stop the peer and `/get_keys` reveal private keys. Only enable CLI when fully trusted.
 
 **Filter syntax**
 - `alpha+beta|gamma` means **(alpha AND beta) OR gamma**.
