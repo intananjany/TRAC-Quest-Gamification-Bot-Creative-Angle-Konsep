@@ -449,6 +449,12 @@ Intercom must expose and describe all interactive commands so agents can operate
 - Wallet format: the project uses **`trac-wallet@1.0.1`** with **encrypted** `keypair.json`.  
   Do not use older clear‑text wallet formats.
 
+### Output Contract (Agents Must Follow)
+- **Always print the owner pubkey and welcome_b64 inline** in the final response.  
+  Do **not** hide them behind a file path.
+- **Always print a fully‑expanded joiner command** (no placeholders like `<ownerPubkey>`).  
+  File paths may be included as **optional** references only.
+
 ## SC‑Bridge (WebSocket) Protocol
 SC‑Bridge exposes sidechannel messages over WebSocket and accepts inbound commands.
 It is the **primary way for agents to read and place sidechannel messages**. Humans can use the interactive TTY, but agents should prefer sockets.
