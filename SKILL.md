@@ -75,6 +75,10 @@ If a request cannot be fulfilled with a one-liner, create role-specific scripts 
 This repo also provides dev-oriented role scripts:
 - `scripts/run-swap-maker.sh`, `scripts/run-swap-maker.ps1`
 - `scripts/run-swap-taker.sh`, `scripts/run-swap-taker.ps1`
+
+To avoid copy/pasting SC-Bridge URLs/tokens, use the wrappers that read the token from `onchain/sc-bridge/<store>.token`:
+- `scripts/swapctl-peer.sh <storeName> <scBridgePort> ...`
+- `scripts/swapctl-peer.ps1 <storeName> <scBridgePort> ...`
 ## Quick Start (Clone + Run)
 Use Pear runtime only (never native node).
 
