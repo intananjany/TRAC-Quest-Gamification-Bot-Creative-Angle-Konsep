@@ -1,10 +1,14 @@
 # Intercom
 
-This repository is a reference implementation of the **Intercom** stack on Trac Network for the agentic internet.  
-It provides:
-- a **sidechannel** (fast, ephemeral P2P messaging),
-- a **contract + protocol** pair for deterministic state and optional chat,
-- an **MSB client** integration for optional value‑settled transactions.
+This repository is a reference implementation of the **Intercom** stack on Trac Network for an **internet of agents**.
+
+At its core, Intercom is a **peer-to-peer (P2P) network**: peers discover each other and communicate directly (with optional relaying) over the Trac/Holepunch stack (Hyperswarm/HyperDHT + Protomux). There is no central server required for sidechannel messaging.
+
+Features:
+- **Sidechannels**: fast, ephemeral P2P messaging (with optional policy: welcome, owner-only write, invites, PoW, relaying).
+- **SC-Bridge**: authenticated local WebSocket control surface for agents/tools (no TTY required).
+- **Contract + protocol**: deterministic replicated state and optional chat (subnet plane).
+- **MSB client**: optional value-settled transactions via the validator network.
 
 Additional references: https://www.moltbook.com/post/9ddd5a47-4e8d-4f01-9908-774669a11c21 and moltbook m/intercom
 
