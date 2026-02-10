@@ -39,6 +39,7 @@ export class AutopostManager {
         tool: j.tool,
         interval_sec: j.intervalSec,
         ttl_sec: j.ttlSec ?? null,
+        valid_until_unix: j.validUntilUnix ?? null,
         args: j.args,
         runs: j.runs,
         started_at: j.startedAt,
@@ -52,7 +53,7 @@ export class AutopostManager {
     return { type: 'autopost_status', jobs: out };
   }
 
-  async start({ name, tool, interval_sec, ttl_sec, args }) {
+  async start({ name, tool, interval_sec, ttl_sec, valid_until_unix, args }) {
     const n = String(name || '').trim();
     if (!n) throw new Error('autopost_start: name is required');
     if (this.jobs.has(n)) throw new Error(`autopost_start: name already exists (${n})`);
@@ -68,11 +69,22 @@ export class AutopostManager {
     const baseArgs = safeCloneArgs(args);
     if (!isObject(baseArgs)) throw new Error('autopost_start: args must be an object');
 
+    const nowSec = Math.floor(Date.now() / 1000);
+    // Autopost MUST NOT extend validity. It runs until an absolute expiry and then stops.
+    const validUntilUnixRaw = valid_until_unix === null || valid_until_unix === undefined ? null : clampInt(valid_until_unix, { min: 1 });
+    const validUntilUnix = validUntilUnixRaw ?? nowSec + ttlSec;
+    if (validUntilUnix <= nowSec) throw new Error('autopost_start: valid_until_unix must be in the future');
+    // Keep job lifetimes bounded to reduce operator footguns.
+    const horizon = validUntilUnix - nowSec;
+    if (horizon < 10) throw new Error('autopost_start: validity horizon too short');
+    if (horizon > 7 * 24 * 3600) throw new Error('autopost_start: validity horizon too long (max 7 days)');
+
     const job = {
       name: n,
       tool: t,
       intervalSec,
       ttlSec,
+      validUntilUnix,
       args: baseArgs,
       runs: 0,
       startedAt: Date.now(),
@@ -85,13 +97,23 @@ export class AutopostManager {
 
     const runOnce = async () => {
       const nowSec = Math.floor(Date.now() / 1000);
+      if (nowSec >= job.validUntilUnix) {
+        // Stop the job when it is no longer valid (do not repost/extend indefinitely).
+        try {
+          if (job._timer) clearInterval(job._timer);
+        } catch (_e) {}
+        this.jobs.delete(job.name);
+        job.lastOk = true;
+        job.lastError = 'expired';
+        return { type: 'autopost_stopped', name: job.name, ok: true, reason: 'expired' };
+      }
       const runArgs = safeCloneArgs(job.args);
       if (t === 'intercomswap_offer_post') {
-        // Keep offers fresh by sending ttl_sec (offer_post rejects ttl+valid_until together).
-        delete runArgs.valid_until_unix;
-        runArgs.ttl_sec = job.ttlSec;
+        // Keep discoverability via periodic repost, but do NOT extend expiry.
+        delete runArgs.ttl_sec;
+        runArgs.valid_until_unix = job.validUntilUnix;
       } else if (t === 'intercomswap_rfq_post') {
-        runArgs.valid_until_unix = nowSec + job.ttlSec;
+        runArgs.valid_until_unix = job.validUntilUnix;
       }
       job.lastRunAt = Date.now();
       try {
@@ -118,6 +140,17 @@ export class AutopostManager {
     }
 
     job._timer = setInterval(() => {
+      // Stop naturally once the offer/RFQ expires.
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (nowSec >= job.validUntilUnix) {
+        try {
+          if (job._timer) clearInterval(job._timer);
+        } catch (_e) {}
+        this.jobs.delete(job.name);
+        job.lastOk = true;
+        job.lastError = 'expired';
+        return;
+      }
       job._queue = job._queue.then(runOnce).catch(() => {});
     }, Math.max(1000, intervalSec * 1000));
 
@@ -129,6 +162,7 @@ export class AutopostManager {
       tool: t,
       interval_sec: intervalSec,
       ttl_sec: job.ttlSec,
+      valid_until_unix: job.validUntilUnix,
       first: first,
     };
   }

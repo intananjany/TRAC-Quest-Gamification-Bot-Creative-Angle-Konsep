@@ -679,16 +679,27 @@ export class ToolExecutor {
       return this._autopost.status({ name: name || '' });
     }
     if (toolName === 'intercomswap_autopost_start') {
-      assertAllowedKeys(args, toolName, ['name', 'tool', 'interval_sec', 'ttl_sec', 'args']);
+      assertAllowedKeys(args, toolName, ['name', 'tool', 'interval_sec', 'ttl_sec', 'valid_until_unix', 'args']);
       requireApproval(toolName, autoApprove);
       const name = expectString(args, toolName, 'name', { min: 1, max: 64, pattern: /^[A-Za-z0-9._-]+$/ });
       const tool = expectString(args, toolName, 'tool', { min: 1, max: 128 });
       const intervalSec = expectInt(args, toolName, 'interval_sec', { min: 5, max: 24 * 3600 });
       const ttlSec = expectInt(args, toolName, 'ttl_sec', { min: 10, max: 7 * 24 * 3600 });
+      const validUntil = expectOptionalInt(args, toolName, 'valid_until_unix', { min: 1 });
       const subArgs = args.args;
       if (!isObject(subArgs)) throw new Error(`${toolName}: args must be an object`);
-      if (dryRun) return { type: 'dry_run', tool: toolName, name, tool_name: tool, interval_sec: intervalSec, ttl_sec: ttlSec, args: subArgs };
-      return await this._autopost.start({ name, tool, interval_sec: intervalSec, ttl_sec: ttlSec, args: subArgs });
+      if (dryRun)
+        return {
+          type: 'dry_run',
+          tool: toolName,
+          name,
+          tool_name: tool,
+          interval_sec: intervalSec,
+          ttl_sec: ttlSec,
+          ...(validUntil ? { valid_until_unix: validUntil } : {}),
+          args: subArgs,
+        };
+      return await this._autopost.start({ name, tool, interval_sec: intervalSec, ttl_sec: ttlSec, valid_until_unix: validUntil, args: subArgs });
     }
     if (toolName === 'intercomswap_autopost_stop') {
       assertAllowedKeys(args, toolName, ['name']);
@@ -851,13 +862,14 @@ export class ToolExecutor {
           sidechannels: peerSidechannels,
           sidechannelInviterKeys: [],
           dhtBootstrap: [],
-          msbDhtBootstrap: [],
-          subnetChannel: '',
-          msbEnabled: false,
-          priceOracleEnabled: false,
-          sidechannelPowEnabled: true,
-          sidechannelPowDifficulty: 12,
-          sidechannelWelcomeRequired: false,
+	          msbDhtBootstrap: [],
+	          subnetChannel: '',
+	          msbEnabled: false,
+	          // Enable by default: used for operator UI (informational only).
+	          priceOracleEnabled: true,
+	          sidechannelPowEnabled: true,
+	          sidechannelPowDifficulty: 12,
+	          sidechannelWelcomeRequired: false,
           sidechannelInviteRequired: true,
           sidechannelInvitePrefixes: ['swap:'],
           logPath: '',

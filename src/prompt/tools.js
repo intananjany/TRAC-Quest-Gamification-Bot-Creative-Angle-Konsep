@@ -567,7 +567,18 @@ export const INTERCOMSWAP_TOOLS = [
       name: { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._-]+$' },
       tool: { type: 'string', enum: ['intercomswap_offer_post', 'intercomswap_rfq_post'] },
       interval_sec: { type: 'integer', minimum: 5, maximum: 86400, description: 'How often to repost.' },
-      ttl_sec: { type: 'integer', minimum: 10, maximum: 7 * 24 * 3600, description: 'Validity window (seconds) kept fresh on each repost.' },
+      ttl_sec: {
+        type: 'integer',
+        minimum: 10,
+        maximum: 7 * 24 * 3600,
+        description:
+          'Absolute validity horizon (seconds) for the offer/RFQ. Autopost stops once expired; reposts do not extend validity.',
+      },
+      valid_until_unix: {
+        ...unixSecParam,
+        description:
+          'Optional absolute expiry (unix seconds). If provided, autopost will stop at this time and all reposts will share the same valid_until_unix.',
+      },
       args: { type: 'object', additionalProperties: true, description: 'Arguments for the selected tool.' },
     },
     required: ['name', 'tool', 'interval_sec', 'ttl_sec', 'args'],
