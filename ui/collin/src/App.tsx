@@ -295,6 +295,14 @@ function App() {
     return null;
   }
 
+  function toolEventResultJson(e: any) {
+    // promptd emits tool steps as {type:"tool", name:"...", result:{...}}.
+    if (!e || typeof e !== 'object') return null;
+    if (String((e as any).type || '') !== 'tool') return null;
+    const r = (e as any).result;
+    return r && typeof r === 'object' ? r : null;
+  }
+
   const localPostedSigKeys = useMemo(() => {
     // Best-effort local outbox detection. Used to keep inboxes clean even before sc_info loads.
     const set = new Set<string>();
@@ -309,11 +317,16 @@ function App() {
     // Prompt tool results (works even if the SC feed is down).
     for (const e of promptEvents) {
       try {
-        const cj = finalEventContentJson(e);
-        if (!cj || typeof cj !== 'object') continue;
-        const t = String((cj as any).type || '').trim();
-        if (t !== 'offer_posted' && t !== 'rfq_posted') continue;
-        add((cj as any).envelope);
+        const fin = finalEventContentJson(e);
+        if (fin && typeof fin === 'object') {
+          const t = String((fin as any).type || '').trim();
+          if (t === 'offer_posted' || t === 'rfq_posted') add((fin as any).envelope);
+        }
+        const toolRes = toolEventResultJson(e);
+        if (toolRes && typeof toolRes === 'object') {
+          const t = String((toolRes as any).type || '').trim();
+          if (t === 'offer_posted' || t === 'rfq_posted') add((toolRes as any).envelope);
+        }
       } catch (_e) {}
     }
 
@@ -385,11 +398,16 @@ function App() {
     for (const e of promptEvents) {
       try {
         const cj = finalEventContentJson(e);
-        if (!cj) continue;
-        if (String(cj.type || '') !== 'offer_posted') continue;
-        const env = cj.envelope;
+        const tr = toolEventResultJson(e);
+        const obj = cj && String((cj as any).type || '') === 'offer_posted'
+          ? cj
+          : tr && String((tr as any).type || '') === 'offer_posted'
+            ? tr
+            : null;
+        if (!obj) continue;
+        const env = (obj as any).envelope;
         if (!env || typeof env !== 'object') continue;
-        const id = String(cj.svc_announce_id || '').trim();
+        const id = String(obj.svc_announce_id || '').trim();
         const key =
           id ||
           envSigKey(env) ||
@@ -400,11 +418,11 @@ function App() {
         if (seen.has(key)) continue;
         seen.add(key);
 
-        const chans = Array.isArray(cj.channels) ? cj.channels.map((c: any) => String(c || '').trim()).filter(Boolean) : [];
+        const chans = Array.isArray(obj.channels) ? obj.channels.map((c: any) => String(c || '').trim()).filter(Boolean) : [];
         out.push({
-          channel: chans[0] || String(cj.channel || '').trim(),
+          channel: chans[0] || '',
           channels: chans,
-          rfq_channels: Array.isArray(cj.rfq_channels) ? cj.rfq_channels : [],
+          rfq_channels: Array.isArray(obj.rfq_channels) ? obj.rfq_channels : [],
           trade_id: String(env.trade_id || env.tradeId || '').trim(),
           ts: typeof env.ts === 'number' ? env.ts : typeof e.ts === 'number' ? e.ts : Date.now(),
           message: env,
@@ -451,11 +469,16 @@ function App() {
     for (const e of promptEvents) {
       try {
         const cj = finalEventContentJson(e);
-        if (!cj) continue;
-        if (String(cj.type || '') !== 'rfq_posted') continue;
-        const env = cj.envelope;
+        const tr = toolEventResultJson(e);
+        const obj = cj && String((cj as any).type || '') === 'rfq_posted'
+          ? cj
+          : tr && String((tr as any).type || '') === 'rfq_posted'
+            ? tr
+            : null;
+        if (!obj) continue;
+        const env = (obj as any).envelope;
         if (!env || typeof env !== 'object') continue;
-        const rfqId = String(cj.rfq_id || '').trim();
+        const rfqId = String(obj.rfq_id || '').trim();
         const key =
           rfqId ||
           envSigKey(env) ||
@@ -466,7 +489,7 @@ function App() {
         if (seen.has(key)) continue;
         seen.add(key);
         out.push({
-          channel: String(cj.channel || '').trim(),
+          channel: String((obj as any).channel || '').trim(),
           trade_id: String(env.trade_id || env.tradeId || '').trim(),
           ts: typeof env.ts === 'number' ? env.ts : typeof e.ts === 'number' ? e.ts : Date.now(),
           message: env,
