@@ -312,6 +312,26 @@ async function getOrCreateAta(connection, payerKeypair, owner, mint, commitment)
   return ata;
 }
 
+async function fetchOnchainFeeSnapshot({ pool, programId, commitment, tradeFeeCollector }) {
+  // Platform fee comes from the program config PDA (global).
+  // Trade fee comes from a trade-config PDA keyed by trade_fee_collector (per fee receiver).
+  const cfg = await pool.call((connection) => getConfigState(connection, programId, commitment), { label: 'fees:get-config' });
+  if (!cfg) throw new Error('Solana escrow program config is not initialized (run sol_config_set / escrowctl config-init first)');
+  const platformFeeBps = Number(cfg.feeBps || 0);
+  const platformFeeCollector = cfg.feeCollector ? cfg.feeCollector.toBase58() : null;
+
+  const tradeCollectorPk = tradeFeeCollector || cfg.feeCollector;
+  if (!tradeCollectorPk) throw new Error('Trade fee collector is not set (and config fee_collector is missing)');
+  const tradeCfg = await pool.call(
+    (connection) => getTradeConfigState(connection, tradeCollectorPk, programId, commitment),
+    { label: 'fees:get-trade-config' }
+  );
+  if (!tradeCfg) throw new Error(`Trade fee config not initialized for ${tradeCollectorPk.toBase58()}`);
+  const tradeFeeBps = Number(tradeCfg.feeBps || 0);
+
+  return { platformFeeBps, platformFeeCollector, tradeFeeBps, tradeFeeCollector: tradeCollectorPk };
+}
+
 function resolveRepoPath(p) {
   const s = String(p || '').trim();
   if (!s) throw new Error('path is required');
@@ -1554,10 +1574,7 @@ export class ToolExecutor {
         'rfq_id',
         'btc_sats',
         'usdt_amount',
-        'platform_fee_bps',
-        'trade_fee_bps',
         'trade_fee_collector',
-        'platform_fee_collector',
         'sol_refund_window_sec',
         'valid_until_unix',
         'valid_for_sec',
@@ -1568,13 +1585,7 @@ export class ToolExecutor {
       const rfqId = normalizeHex32(expectString(args, toolName, 'rfq_id', { min: 64, max: 64 }), 'rfq_id');
       const btcSats = expectInt(args, toolName, 'btc_sats', { min: 1 });
       const usdtAmount = normalizeAtomicAmount(expectString(args, toolName, 'usdt_amount', { max: 64 }), 'usdt_amount');
-      const platformFeeBps = expectInt(args, toolName, 'platform_fee_bps', { min: 0, max: 500 });
-      const tradeFeeBps = expectInt(args, toolName, 'trade_fee_bps', { min: 0, max: 1000 });
-      if (platformFeeBps + tradeFeeBps > 1500) throw new Error(`${toolName}: total fee bps exceeds 1500 cap`);
       const tradeFeeCollector = normalizeBase58(expectString(args, toolName, 'trade_fee_collector', { max: 64 }), 'trade_fee_collector');
-      const platformFeeCollector = args.platform_fee_collector
-        ? normalizeBase58(String(args.platform_fee_collector), 'platform_fee_collector')
-        : null;
       const solRefundWindowSec =
         expectOptionalInt(args, toolName, 'sol_refund_window_sec', { min: SOL_REFUND_MIN_SEC, max: SOL_REFUND_MAX_SEC }) ??
         SOL_REFUND_DEFAULT_SEC;
@@ -1585,7 +1596,21 @@ export class ToolExecutor {
       if (!validUntil) {
         throw new Error(`${toolName}: valid_until_unix or valid_for_sec is required`);
       }
-      const appHash = deriveIntercomswapAppHash({ solanaProgramId: this._programId().toBase58() });
+
+      // Fees are not negotiated per-trade: they are read from on-chain config/trade-config.
+      const programId = this._programId();
+      const commitment = this._commitment();
+      const fees = await fetchOnchainFeeSnapshot({
+        pool: this._pool(),
+        programId,
+        commitment,
+        tradeFeeCollector: new PublicKey(tradeFeeCollector),
+      });
+      const platformFeeBps = Number(fees.platformFeeBps || 0);
+      const tradeFeeBps = Number(fees.tradeFeeBps || 0);
+      if (platformFeeBps + tradeFeeBps > 1500) throw new Error(`${toolName}: on-chain total fee bps exceeds 1500 cap`);
+
+      const appHash = deriveIntercomswapAppHash({ solanaProgramId: programId.toBase58() });
 
       const unsigned = createUnsignedEnvelope({
         v: 1,
@@ -1602,7 +1627,7 @@ export class ToolExecutor {
           trade_fee_bps: tradeFeeBps,
           trade_fee_collector: tradeFeeCollector,
           sol_refund_window_sec: solRefundWindowSec,
-          ...(platformFeeCollector ? { platform_fee_collector: platformFeeCollector } : {}),
+          ...(fees.platformFeeCollector ? { platform_fee_collector: String(fees.platformFeeCollector) } : {}),
           valid_until_unix: validUntil,
         },
       });
@@ -1620,10 +1645,7 @@ export class ToolExecutor {
       assertAllowedKeys(args, toolName, [
         'channel',
         'rfq_envelope',
-        'platform_fee_bps',
-        'trade_fee_bps',
         'trade_fee_collector',
-        'platform_fee_collector',
         'sol_refund_window_sec',
         'valid_until_unix',
         'valid_for_sec',
@@ -1645,13 +1667,7 @@ export class ToolExecutor {
 
       const rfqId = hashUnsignedEnvelope(stripSignature(rfq));
 
-      const platformFeeBps = expectInt(args, toolName, 'platform_fee_bps', { min: 0, max: 500 });
-      const tradeFeeBps = expectInt(args, toolName, 'trade_fee_bps', { min: 0, max: 1000 });
-      if (platformFeeBps + tradeFeeBps > 1500) throw new Error(`${toolName}: total fee bps exceeds 1500 cap`);
       const tradeFeeCollector = normalizeBase58(expectString(args, toolName, 'trade_fee_collector', { max: 64 }), 'trade_fee_collector');
-      const platformFeeCollector = args.platform_fee_collector
-        ? normalizeBase58(String(args.platform_fee_collector), 'platform_fee_collector')
-        : null;
       const solRefundWindowSec =
         expectOptionalInt(args, toolName, 'sol_refund_window_sec', { min: SOL_REFUND_MIN_SEC, max: SOL_REFUND_MAX_SEC }) ??
         SOL_REFUND_DEFAULT_SEC;
@@ -1677,7 +1693,20 @@ export class ToolExecutor {
         throw new Error(`${toolName}: valid_until_unix or valid_for_sec is required`);
       }
 
-      const appHash = deriveIntercomswapAppHash({ solanaProgramId: this._programId().toBase58() });
+      // Fees are not negotiated per-trade: they are read from on-chain config/trade-config.
+      const programId = this._programId();
+      const commitment = this._commitment();
+      const fees = await fetchOnchainFeeSnapshot({
+        pool: this._pool(),
+        programId,
+        commitment,
+        tradeFeeCollector: new PublicKey(tradeFeeCollector),
+      });
+      const platformFeeBps = Number(fees.platformFeeBps || 0);
+      const tradeFeeBps = Number(fees.tradeFeeBps || 0);
+      if (platformFeeBps + tradeFeeBps > 1500) throw new Error(`${toolName}: on-chain total fee bps exceeds 1500 cap`);
+
+      const appHash = deriveIntercomswapAppHash({ solanaProgramId: programId.toBase58() });
       const rfqAppHash = String(rfq?.body?.app_hash || '').trim().toLowerCase();
       if (rfqAppHash !== appHash) {
         throw new Error(`${toolName}: rfq_envelope.app_hash mismatch (wrong app/program for this channel)`);
@@ -1698,7 +1727,7 @@ export class ToolExecutor {
           trade_fee_bps: tradeFeeBps,
           trade_fee_collector: tradeFeeCollector,
           sol_refund_window_sec: solRefundWindowSec,
-          ...(platformFeeCollector ? { platform_fee_collector: platformFeeCollector } : {}),
+          ...(fees.platformFeeCollector ? { platform_fee_collector: String(fees.platformFeeCollector) } : {}),
           valid_until_unix: validUntil,
         },
       });
@@ -2079,10 +2108,7 @@ export class ToolExecutor {
         'sol_refund_after_unix',
         'ln_receiver_peer',
         'ln_payer_peer',
-        'platform_fee_bps',
-        'trade_fee_bps',
         'trade_fee_collector',
-        'platform_fee_collector',
         'terms_valid_until_unix',
       ]);
       requireApproval(toolName, autoApprove);
@@ -2097,15 +2123,23 @@ export class ToolExecutor {
       assertRefundAfterUnixWindow(solRefundAfter, toolName);
       const lnReceiverPeer = normalizeHex32(expectString(args, toolName, 'ln_receiver_peer', { min: 64, max: 64 }), 'ln_receiver_peer');
       const lnPayerPeer = normalizeHex32(expectString(args, toolName, 'ln_payer_peer', { min: 64, max: 64 }), 'ln_payer_peer');
-      const platformFeeBps = expectInt(args, toolName, 'platform_fee_bps', { min: 0, max: 500 });
-      const tradeFeeBps = expectInt(args, toolName, 'trade_fee_bps', { min: 0, max: 1000 });
       const tradeFeeCollector = normalizeBase58(expectString(args, toolName, 'trade_fee_collector', { max: 64 }), 'trade_fee_collector');
-      const platformFeeCollector = args.platform_fee_collector
-        ? normalizeBase58(String(args.platform_fee_collector), 'platform_fee_collector')
-        : null;
       const termsValidUntil = expectOptionalInt(args, toolName, 'terms_valid_until_unix', { min: 1 });
 
-      const appHash = deriveIntercomswapAppHash({ solanaProgramId: this._programId().toBase58(), appTag: INTERCOMSWAP_APP_TAG });
+      // Fees are not negotiated per-trade: they are read from on-chain config/trade-config.
+      const programId = this._programId();
+      const commitment = this._commitment();
+      const fees = await fetchOnchainFeeSnapshot({
+        pool: this._pool(),
+        programId,
+        commitment,
+        tradeFeeCollector: new PublicKey(tradeFeeCollector),
+      });
+      const platformFeeBps = Number(fees.platformFeeBps || 0);
+      const tradeFeeBps = Number(fees.tradeFeeBps || 0);
+      if (platformFeeBps + tradeFeeBps > 1500) throw new Error(`${toolName}: on-chain total fee bps exceeds 1500 cap`);
+
+      const appHash = deriveIntercomswapAppHash({ solanaProgramId: programId.toBase58(), appTag: INTERCOMSWAP_APP_TAG });
       const unsigned = createUnsignedEnvelope({
         v: 1,
         kind: KIND.TERMS,
@@ -2126,7 +2160,7 @@ export class ToolExecutor {
           platform_fee_bps: platformFeeBps,
           trade_fee_bps: tradeFeeBps,
           trade_fee_collector: tradeFeeCollector,
-          ...(platformFeeCollector ? { platform_fee_collector: platformFeeCollector } : {}),
+          ...(fees.platformFeeCollector ? { platform_fee_collector: String(fees.platformFeeCollector) } : {}),
           ...(termsValidUntil ? { terms_valid_until_unix: termsValidUntil } : {}),
         },
       });
@@ -2779,8 +2813,6 @@ export class ToolExecutor {
         'recipient',
         'refund',
         'refund_after_unix',
-        'platform_fee_bps',
-        'trade_fee_bps',
         'trade_fee_collector',
       ]);
       requireApproval(toolName, autoApprove);
@@ -2794,8 +2826,6 @@ export class ToolExecutor {
       const refund = new PublicKey(normalizeBase58(expectString(args, toolName, 'refund', { max: 64 }), 'refund'));
       const refundAfterUnix = expectInt(args, toolName, 'refund_after_unix', { min: 1 });
       assertRefundAfterUnixWindow(refundAfterUnix, toolName);
-      const platformFeeBps = expectInt(args, toolName, 'platform_fee_bps', { min: 0, max: 500 });
-      const tradeFeeBps = expectInt(args, toolName, 'trade_fee_bps', { min: 0, max: 1000 });
       const tradeFeeCollector = new PublicKey(normalizeBase58(expectString(args, toolName, 'trade_fee_collector', { max: 64 }), 'trade_fee_collector'));
       if (dryRun) return { type: 'dry_run', tool: toolName, channel, trade_id: tradeId, payment_hash_hex: paymentHashHex };
 
@@ -2805,6 +2835,17 @@ export class ToolExecutor {
       const programId = this._programId();
       const commitment = this._commitment();
       const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
+
+      // Fees are read from on-chain config/trade-config; callers must not supply them.
+      const fees = await fetchOnchainFeeSnapshot({
+        pool: this._pool(),
+        programId,
+        commitment,
+        tradeFeeCollector,
+      });
+      const platformFeeBps = Number(fees.platformFeeBps || 0);
+      const tradeFeeBps = Number(fees.tradeFeeBps || 0);
+      if (platformFeeBps + tradeFeeBps > 1500) throw new Error(`${toolName}: on-chain total fee bps exceeds 1500 cap`);
 
       const build = await this._pool().call(async (connection) => {
         const payerAta = await getOrCreateAta(connection, signer, signer.publicKey, mint, commitment);
@@ -3801,10 +3842,7 @@ export class ToolExecutor {
         'recipient',
         'refund',
         'refund_after_unix',
-        'platform_fee_bps',
-        'trade_fee_bps',
         'trade_fee_collector',
-        'platform_fee_collector',
       ]);
       requireApproval(toolName, autoApprove);
       const paymentHashHex = normalizeHex32(expectString(args, toolName, 'payment_hash_hex', { min: 64, max: 64 }), 'payment_hash_hex');
@@ -3815,17 +3853,24 @@ export class ToolExecutor {
       const refund = new PublicKey(normalizeBase58(expectString(args, toolName, 'refund', { max: 64 }), 'refund'));
       const refundAfterUnix = expectInt(args, toolName, 'refund_after_unix', { min: 1 });
       assertRefundAfterUnixWindow(refundAfterUnix, toolName);
-      const platformFeeBps = expectInt(args, toolName, 'platform_fee_bps', { min: 0, max: 500 });
-      const tradeFeeBps = expectInt(args, toolName, 'trade_fee_bps', { min: 0, max: 1000 });
       const tradeFeeCollector = new PublicKey(normalizeBase58(expectString(args, toolName, 'trade_fee_collector', { max: 64 }), 'trade_fee_collector'));
-      // platform_fee_collector is validated in TERMS, but not required for escrow init (program uses config).
-      void args.platform_fee_collector;
+
+      // Fees are read from on-chain config/trade-config; callers must not supply them.
+      const programId = this._programId();
+      const commitment = this._commitment();
+      const fees = await fetchOnchainFeeSnapshot({
+        pool: this._pool(),
+        programId,
+        commitment,
+        tradeFeeCollector,
+      });
+      const platformFeeBps = Number(fees.platformFeeBps || 0);
+      const tradeFeeBps = Number(fees.tradeFeeBps || 0);
+      if (platformFeeBps + tradeFeeBps > 1500) throw new Error(`${toolName}: on-chain total fee bps exceeds 1500 cap`);
 
       if (dryRun) return { type: 'dry_run', tool: toolName, payment_hash_hex: paymentHashHex };
 
       const signer = this._requireSolanaSigner();
-      const programId = this._programId();
-      const commitment = this._commitment();
       const { computeUnitLimit, computeUnitPriceMicroLamports } = this._computeBudget();
 
       return this._pool().call(async (connection) => {

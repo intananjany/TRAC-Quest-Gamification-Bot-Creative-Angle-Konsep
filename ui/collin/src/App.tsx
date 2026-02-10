@@ -98,6 +98,49 @@ function App() {
   const [lnFundingAddrErr, setLnFundingAddrErr] = useState<string | null>(null);
   const [solBalance, setSolBalance] = useState<any>(null);
   const [solBalanceErr, setSolBalanceErr] = useState<string | null>(null);
+  const [walletUsdtMint, setWalletUsdtMint] = useState<string>(() => {
+    try {
+      return String(window.localStorage.getItem('collin_wallet_usdt_mint') || '').trim();
+    } catch (_e) {
+      return '';
+    }
+  });
+  const [walletUsdtAta, setWalletUsdtAta] = useState<string | null>(null);
+  const [walletUsdtAtomic, setWalletUsdtAtomic] = useState<string | null>(null);
+  const [walletUsdtErr, setWalletUsdtErr] = useState<string | null>(null);
+
+  const [lnWithdrawTo, setLnWithdrawTo] = useState<string>('');
+  const [lnWithdrawAmountSats, setLnWithdrawAmountSats] = useState<number | null>(null);
+  const [lnWithdrawSatPerVbyte, setLnWithdrawSatPerVbyte] = useState<number>(2);
+
+  const [solSendTo, setSolSendTo] = useState<string>('');
+  const [solSendLamports, setSolSendLamports] = useState<string | null>(null);
+
+  const [usdtSendToOwner, setUsdtSendToOwner] = useState<string>('');
+  const [usdtSendAtomic, setUsdtSendAtomic] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      if (walletUsdtMint.trim()) window.localStorage.setItem('collin_wallet_usdt_mint', walletUsdtMint.trim());
+    } catch (_e) {}
+  }, [walletUsdtMint]);
+
+  useEffect(() => {
+    // Best-effort UX: infer token mint from the most recent receipt, so operators immediately see the right USDT mint.
+    if (walletUsdtMint.trim()) return;
+    const rec = Array.isArray(preflight?.receipts) ? preflight.receipts[0] : null;
+    const mint = String(rec?.sol_mint || '').trim();
+    if (mint) setWalletUsdtMint(mint);
+  }, [preflight?.receipts, walletUsdtMint]);
+
+  useEffect(() => {
+    // Platform fee is set by the Solana program config (not negotiated). Mirror it into the RFQ/Offer caps.
+    const bps = typeof preflight?.sol_config?.fee_bps === 'number' ? Number(preflight.sol_config.fee_bps) : null;
+    if (typeof bps === 'number' && Number.isFinite(bps) && bps >= 0) {
+      setOfferMaxPlatformFeeBps(Math.trunc(bps));
+      setRfqMaxPlatformFeeBps(Math.trunc(bps));
+    }
+  }, [preflight?.sol_config?.fee_bps]);
 
   const [lnPeerInput, setLnPeerInput] = useState<string>('');
   const [lnChannelNodeId, setLnChannelNodeId] = useState<string>('');
@@ -125,10 +168,11 @@ function App() {
   const [offerBotIntervalSec, setOfferBotIntervalSec] = useState<number>(60);
 
   // Sell BTC: RFQ poster (binding direction BTC_LN->USDT_SOL).
+  type RfqLine = { id: string; trade_id: string; btc_sats: number; usdt_amount: string };
   const [rfqChannel, setRfqChannel] = useState<string>('0000intercomswapbtcusdt');
-  const [rfqTradeId, setRfqTradeId] = useState<string>(() => `rfq-${Date.now()}`);
-  const [rfqBtcSats, setRfqBtcSats] = useState<number>(10_000);
-  const [rfqUsdtAtomic, setRfqUsdtAtomic] = useState<string>('1000000'); // 1.000000 USDT
+  const [rfqLines, setRfqLines] = useState<RfqLine[]>(() => [
+    { id: `rfq-${Date.now()}-0`, trade_id: `rfq-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`, btc_sats: 10_000, usdt_amount: '1000000' }, // 1.000000 USDT
+  ]);
   const [rfqMaxPlatformFeeBps, setRfqMaxPlatformFeeBps] = useState<number>(50); // 0.5%
   const [rfqMaxTradeFeeBps, setRfqMaxTradeFeeBps] = useState<number>(50); // 0.5%
   const [rfqMaxTotalFeeBps, setRfqMaxTotalFeeBps] = useState<number>(100); // 1.0%
@@ -920,8 +964,7 @@ function App() {
       const msg = offerEvt?.message;
       const body = msg?.body;
       const offers = Array.isArray(body?.offers) ? body.offers : [];
-      const o = offers[0] && typeof offers[0] === 'object' ? offers[0] : null;
-      if (!o) throw new Error('Offer has no offers[]');
+      if (offers.length < 1) throw new Error('Offer has no offers[]');
 
       const rfqChans = Array.isArray(body?.rfq_channels)
         ? body.rfq_channels.map((c: any) => String(c || '').trim()).filter(Boolean)
@@ -929,25 +972,37 @@ function App() {
       const channel =
         rfqChans[0] || String(offerEvt?.channel || '').trim() || scChannels.split(',')[0]?.trim() || '0000intercomswapbtcusdt';
 
-      const btcSats = Number(o?.btc_sats);
-      const usdtAmount = String(o?.usdt_amount || '').trim();
-      if (!Number.isInteger(btcSats) || btcSats < 1) throw new Error('Offer btc_sats invalid');
-      if (!/^[0-9]+$/.test(usdtAmount)) throw new Error('Offer usdt_amount invalid');
+      // Adopt all offer lines (max 20). Each RFQ line has its own trade_id so multiple can run in parallel.
+      const adoptedLines: RfqLine[] = [];
+      const now = Date.now();
+      for (let i = 0; i < offers.length && adoptedLines.length < 20; i += 1) {
+        const o = offers[i] && typeof offers[i] === 'object' ? offers[i] : null;
+        if (!o) continue;
+        const btcSats = Number((o as any)?.btc_sats);
+        const usdtAmount = String((o as any)?.usdt_amount || '').trim();
+        if (!Number.isInteger(btcSats) || btcSats < 1) continue;
+        if (!/^[0-9]+$/.test(usdtAmount)) continue;
+        adoptedLines.push({
+          id: `rfqline-${now}-${i}-${Math.random().toString(16).slice(2)}`,
+          trade_id: `rfq-${now}-${i}-${Math.random().toString(16).slice(2, 10)}`,
+          btc_sats: btcSats,
+          usdt_amount: usdtAmount,
+        });
+      }
+      if (adoptedLines.length < 1) throw new Error('Offer has no valid lines (btc_sats/usdt_amount)');
 
-      const maxPlatform = Number(o?.max_platform_fee_bps);
-      const maxTrade = Number(o?.max_trade_fee_bps);
-      const maxTotal = Number(o?.max_total_fee_bps);
-      const minWin = Number(o?.min_sol_refund_window_sec);
-      const maxWin = Number(o?.max_sol_refund_window_sec);
+      const o0 = offers[0] && typeof offers[0] === 'object' ? offers[0] : null;
+      const maxTrade = Number((o0 as any)?.max_trade_fee_bps);
+      const maxTotal = Number((o0 as any)?.max_total_fee_bps);
+      const minWin = Number((o0 as any)?.min_sol_refund_window_sec);
+      const maxWin = Number((o0 as any)?.max_sol_refund_window_sec);
 
       const nowSec = Math.floor(Date.now() / 1000);
       const offerUntil = Number(body?.valid_until_unix);
       const until = Number.isFinite(offerUntil) && offerUntil > nowSec + 60 ? Math.trunc(offerUntil) : nowSec + 24 * 3600;
 
       setRfqChannel(channel);
-      setRfqTradeId(`rfq-${Date.now()}`);
-      setRfqBtcSats(btcSats);
-      setRfqUsdtAtomic(usdtAmount);
+      setRfqLines(adoptedLines);
       const SOL_REFUND_MIN_SEC = 3600;
       const SOL_REFUND_MAX_SEC = 7 * 24 * 3600;
 
@@ -965,7 +1020,6 @@ function App() {
         return c;
       };
 
-      if (Number.isFinite(maxPlatform)) setRfqMaxPlatformFeeBps(clampBps(maxPlatform, 500, 'platform'));
       if (Number.isFinite(maxTrade)) setRfqMaxTradeFeeBps(clampBps(maxTrade, 1000, 'trade'));
       if (Number.isFinite(maxTotal)) setRfqMaxTotalFeeBps(clampBps(maxTotal, 1500, 'total'));
 
@@ -981,7 +1035,7 @@ function App() {
 
       setActiveTab('sell_btc');
       if (warnings.length > 0) pushToast('info', warnings.join('\n'), { ttlMs: 10_000 });
-      pushToast('info', 'Offer loaded into New RFQ. Review then click “Post RFQ”.', { ttlMs: 6500 });
+      pushToast('info', `Offer loaded into New RFQ (${adoptedLines.length} line${adoptedLines.length === 1 ? '' : 's'}). Review then click “Post RFQ”.`, { ttlMs: 6500 });
     } catch (e: any) {
       pushToast('error', e?.message || String(e));
     }
@@ -1125,11 +1179,19 @@ function App() {
     const channel = rfqChannel.trim() || scChannels.split(',')[0]?.trim() || '';
     if (!channel) return void pushToast('error', 'RFQ channel is required');
 
-    const trade_id = rfqTradeId.trim() || `rfq-${Date.now()}`;
-    if (!trade_id) return void pushToast('error', 'trade_id is required');
-
-    if (!Number.isInteger(rfqBtcSats) || rfqBtcSats < 1) return void pushToast('error', 'BTC amount must be >= 1 sat');
-    if (!/^[0-9]+$/.test(String(rfqUsdtAtomic || '').trim())) return void pushToast('error', 'USDT amount must be a base-unit integer');
+    const lines = Array.isArray(rfqLines) ? rfqLines : [];
+    if (lines.length < 1) return void pushToast('error', 'RFQ must include at least 1 line');
+    if (lines.length > 20) return void pushToast('error', 'RFQ has too many lines (max 20)');
+    for (let i = 0; i < lines.length; i += 1) {
+      const l = lines[i];
+      const trade_id = String(l?.trade_id || '').trim();
+      if (!trade_id) return void pushToast('error', `RFQ line ${i + 1}: trade_id missing`);
+      if (!/^[A-Za-z0-9_.:-]+$/.test(trade_id)) return void pushToast('error', `RFQ line ${i + 1}: trade_id invalid`);
+      const btc = Number((l as any)?.btc_sats);
+      const usdt = String((l as any)?.usdt_amount || '').trim();
+      if (!Number.isInteger(btc) || btc < 1) return void pushToast('error', `RFQ line ${i + 1}: BTC must be >= 1 sat`);
+      if (!/^[0-9]+$/.test(usdt)) return void pushToast('error', `RFQ line ${i + 1}: USDT must be a base-unit integer`);
+    }
 
     if (rfqMaxPlatformFeeBps + rfqMaxTradeFeeBps > rfqMaxTotalFeeBps) {
       return void pushToast('error', 'Fee caps invalid: total must be >= platform + trade');
@@ -1157,7 +1219,10 @@ function App() {
     }
 
     if (toolRequiresApproval('intercomswap_rfq_post') && !autoApprove) {
-      const ok = window.confirm(`Post RFQ now?\n\nchannel: ${channel}\ntrade_id: ${trade_id}\nBTC: ${rfqBtcSats} sats\nUSDT: ${rfqUsdtAtomic}`);
+      const first = lines[0];
+      const ok = window.confirm(
+        `Post ${lines.length} RFQ${lines.length === 1 ? '' : 's'} now?\n\nchannel: ${channel}\nfirst.trade_id: ${String(first?.trade_id || '')}\nfirst.BTC: ${Number(first?.btc_sats || 0)} sats\nfirst.USDT: ${String(first?.usdt_amount || '')}`
+      );
       if (!ok) return;
     }
 
@@ -1165,9 +1230,6 @@ function App() {
     try {
       const baseArgs = {
         channel,
-        trade_id,
-        btc_sats: rfqBtcSats,
-        usdt_amount: String(rfqUsdtAtomic),
         max_platform_fee_bps: rfqMaxPlatformFeeBps,
         max_trade_fee_bps: rfqMaxTradeFeeBps,
         max_total_fee_bps: rfqMaxTotalFeeBps,
@@ -1176,32 +1238,75 @@ function App() {
       };
 
       if (!rfqRunAsBot) {
-        const args = { ...baseArgs, valid_until_unix: rfqValidUntilUnix };
-        const out = await runToolFinal('intercomswap_rfq_post', args, { auto_approve: true });
-        const cj = out?.content_json;
-        if (cj && typeof cj === 'object' && cj.type === 'error') throw new Error(String(cj.error || 'rfq_post failed'));
-        const id = String(cj?.rfq_id || '').trim();
-        pushToast('success', `RFQ posted${id ? ` (${id.slice(0, 12)}…)` : ''}`);
-        setRfqTradeId(`rfq-${Date.now()}`);
+        let okCount = 0;
+        let firstId = '';
+        for (let i = 0; i < lines.length; i += 1) {
+          const l = lines[i];
+          const args = {
+            ...baseArgs,
+            trade_id: String(l.trade_id),
+            btc_sats: Number(l.btc_sats),
+            usdt_amount: String(l.usdt_amount),
+            valid_until_unix: rfqValidUntilUnix,
+          };
+          const out = await runToolFinal('intercomswap_rfq_post', args, { auto_approve: true });
+          const cj = out?.content_json;
+          if (cj && typeof cj === 'object' && cj.type === 'error') throw new Error(String(cj.error || 'rfq_post failed'));
+          const id = String(cj?.rfq_id || '').trim();
+          if (!firstId && id) firstId = id;
+          okCount += 1;
+        }
+        pushToast(
+          'success',
+          `RFQ${okCount === 1 ? '' : 's'} posted: ${okCount}${firstId ? ` (first ${firstId.slice(0, 12)}…)` : ''}`
+        );
+        // Prepare a fresh batch (new trade_ids) for the next manual post, while keeping amounts.
+        setRfqLines((prev) =>
+          prev.map((l, i) => ({
+            ...l,
+            id: `rfq-${Date.now()}-${i}`,
+            trade_id: `rfq-${Date.now()}-${i}-${Math.random().toString(16).slice(2, 10)}`,
+          }))
+        );
       } else {
         const nowSec = Math.floor(Date.now() / 1000);
         const ttlSec = Math.max(10, Math.min(7 * 24 * 3600, Math.trunc(rfqValidUntilUnix - nowSec)));
-        const safeLabel = trade_id.replaceAll(/[^A-Za-z0-9._-]/g, '_').slice(0, 36);
-        const botName = `rfq_${safeLabel}_${Date.now()}`.slice(0, 64);
+        let okCount = 0;
+        for (let i = 0; i < lines.length; i += 1) {
+          const l = lines[i];
+          const trade_id = String(l.trade_id).trim();
+          const safeLabel = trade_id.replaceAll(/[^A-Za-z0-9._-]/g, '_').slice(0, 30);
+          const botName = `rfq_${safeLabel}_${Date.now()}_${i + 1}`.slice(0, 64);
 
-        if (toolRequiresApproval('intercomswap_autopost_start') && !autoApprove) {
-          const ok = window.confirm(`Start RFQ bot now?\n\nname: ${botName}\ninterval_sec: ${rfqBotIntervalSec}\nttl_sec: ${ttlSec}`);
-          if (!ok) return;
+          if (toolRequiresApproval('intercomswap_autopost_start') && !autoApprove) {
+            const ok = window.confirm(`Start RFQ bot now?\n\nname: ${botName}\ninterval_sec: ${rfqBotIntervalSec}\nttl_sec: ${ttlSec}`);
+            if (!ok) return;
+          }
+
+          const subArgs = {
+            ...baseArgs,
+            trade_id,
+            btc_sats: Number(l.btc_sats),
+            usdt_amount: String(l.usdt_amount),
+          };
+
+          const out = await runToolFinal(
+            'intercomswap_autopost_start',
+            {
+              name: botName,
+              tool: 'intercomswap_rfq_post',
+              interval_sec: rfqBotIntervalSec,
+              ttl_sec: ttlSec,
+              valid_until_unix: rfqValidUntilUnix,
+              args: subArgs,
+            },
+            { auto_approve: true }
+          );
+          const cj = out?.content_json;
+          if (cj && typeof cj === 'object' && cj.type === 'error') throw new Error(String(cj.error || 'autopost_start failed'));
+          okCount += 1;
         }
-
-        const out = await runToolFinal(
-          'intercomswap_autopost_start',
-          { name: botName, tool: 'intercomswap_rfq_post', interval_sec: rfqBotIntervalSec, ttl_sec: ttlSec, valid_until_unix: rfqValidUntilUnix, args: baseArgs },
-          { auto_approve: true }
-        );
-        const cj = out?.content_json;
-        if (cj && typeof cj === 'object' && cj.type === 'error') throw new Error(String(cj.error || 'autopost_start failed'));
-        pushToast('success', `RFQ bot started (${botName})`);
+        pushToast('success', `RFQ bot${okCount === 1 ? '' : 's'} started: ${okCount}`);
         void refreshPreflight();
       }
     } catch (e: any) {
@@ -2688,12 +2793,13 @@ function App() {
                   <span className="mono">Fee Caps</span>
                 </div>
                 <div className="gridform">
-                  <PctBpsField
-                    label="platform"
-                    maxBps={500}
-                    bps={offerMaxPlatformFeeBps}
-                    onBps={(n) => setOfferMaxPlatformFeeBps(n ?? 0)}
-                  />
+                  <div className="amt">
+                    <div className="muted small">platform (fixed)</div>
+                    <div className="mono">{bpsToPctDisplay(offerMaxPlatformFeeBps)}%</div>
+                    <div className="muted small">
+                      bps: <span className="mono">{offerMaxPlatformFeeBps}</span>
+                    </div>
+                  </div>
                   <PctBpsField
                     label="trade"
                     maxBps={1000}
@@ -2707,9 +2813,7 @@ function App() {
                     onBps={(n) => setOfferMaxTotalFeeBps(n ?? 0)}
                   />
                 </div>
-                <div className="muted small">
-                  total must be &gt;= platform + trade.
-                </div>
+                <div className="muted small">platform fee comes from the Solana program config (not negotiated). total must be &gt;= platform + trade.</div>
               </div>
 
               <div className="field">
@@ -2875,7 +2979,6 @@ function App() {
 	                            if (lines.length > 0) setOfferLines(lines.slice(0, 20));
 	                            const o0 = offers[0] && typeof offers[0] === 'object' ? offers[0] : null;
 	                            if (o0) {
-	                              if (typeof o0.max_platform_fee_bps === 'number') setOfferMaxPlatformFeeBps(o0.max_platform_fee_bps);
 	                              if (typeof o0.max_trade_fee_bps === 'number') setOfferMaxTradeFeeBps(o0.max_trade_fee_bps);
 	                              if (typeof o0.max_total_fee_bps === 'number') setOfferMaxTotalFeeBps(o0.max_total_fee_bps);
 	                              if (typeof o0.min_sol_refund_window_sec === 'number') setOfferMinSolRefundWindowSec(o0.min_sol_refund_window_sec);
@@ -2980,71 +3083,128 @@ function App() {
 
               <div className="field">
                 <div className="field-hd">
-                  <span className="mono">trade_id</span>
+                  <span className="mono">RFQ Lines</span>
                 </div>
-                <input className="input mono" value={rfqTradeId} onChange={(e) => setRfqTradeId(e.target.value)} placeholder="rfq-..." />
+                <div className="muted small">Each line posts a separate RFQ (max 20).</div>
+                {rfqLines.map((l, idx) => (
+                  <div key={l.id} className="rowitem" style={{ marginTop: 10 }}>
+                    <div className="rowitem-top">
+                      <span className="mono chip">{idx + 1}</span>
+                      <span className="muted small">
+                        trade_id: <span className="mono">{String(l.trade_id || '').slice(0, 24)}{String(l.trade_id || '').length > 24 ? '…' : ''}</span>
+                      </span>
+                      <button className="btn small" onClick={() => copyToClipboard('trade_id', l.trade_id)} disabled={!String(l.trade_id || '').trim()}>
+                        Copy
+                      </button>
+                      {rfqLines.length > 1 ? (
+                        <button className="btn small danger" onClick={() => setRfqLines((prev) => prev.filter((x) => x.id !== l.id))}>
+                          Remove
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="rowitem-mid">
+                      <div className="gridform" style={{ width: '100%' }}>
+                        <div className="field">
+                          <div className="field-hd">
+                            <span className="mono">Pay BTC (Lightning)</span>
+                          </div>
+                          <BtcSatsField
+                            name={`rfq_btc_${l.id}`}
+                            sats={l.btc_sats}
+                            onSats={(n) =>
+                              setRfqLines((prev) =>
+                                prev.map((x) => (x.id === l.id ? { ...x, btc_sats: Number(n || 0) } : x))
+                              )
+                            }
+                          />
+                        </div>
+                        <div className="field">
+                          <div className="field-hd">
+                            <span className="mono">Receive USDT (Solana)</span>
+                          </div>
+                          <UsdtAtomicField
+                            decimals={6}
+                            atomic={l.usdt_amount}
+                            onAtomic={(a) =>
+                              setRfqLines((prev) =>
+                                prev.map((x) => (x.id === l.id ? { ...x, usdt_amount: String(a || '') } : x))
+                              )
+                            }
+                            placeholder="10"
+                          />
+                        </div>
+                      </div>
+                      {(() => {
+                        const btcSats = Number(l.btc_sats);
+                        const usdtAtomic = String(l.usdt_amount || '').trim();
+                        const btcBtc = Number.isFinite(btcSats) ? btcSats / 1e8 : null;
+                        const usdt = usdtAtomic ? atomicToNumber(usdtAtomic, 6) : null;
+                        const implied = btcBtc && btcBtc > 0 && usdt !== null ? usdt / btcBtc : null;
+                        const btcUsd = btcBtc !== null && oracle.btc_usd ? btcBtc * oracle.btc_usd : null;
+                        const usdtUsd = usdt !== null && oracle.usdt_usd ? usdt * oracle.usdt_usd : null;
+                        if (implied === null && btcUsd === null && usdtUsd === null) return null;
+                        return (
+                          <div className="muted small" style={{ marginTop: 6 }}>
+                            {typeof implied === 'number' && Number.isFinite(implied) ? (
+                              <span>
+                                implied: <span className="mono">{implied.toFixed(2)}</span> USDT/BTC
+                              </span>
+                            ) : null}
+                            {btcUsd !== null ? (
+                              <span>
+                                {implied !== null ? ' · ' : ''}
+                                BTC value: <span className="mono">{fmtUsd(btcUsd)}</span>
+                              </span>
+                            ) : null}
+                            {usdtUsd !== null ? (
+                              <span>
+                                {(implied !== null || btcUsd !== null) ? ' · ' : ''}
+                                USDT value: <span className="mono">{fmtUsd(usdtUsd)}</span>
+                              </span>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                ))}
+                <div className="row" style={{ marginTop: 10 }}>
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      setRfqLines((prev) => {
+                        if (prev.length >= 20) return prev;
+                        const last = prev[prev.length - 1] || { btc_sats: 10_000, usdt_amount: '1000000' };
+                        const now = Date.now();
+                        return prev.concat([
+                          {
+                            id: `rfq-${now}-${Math.random().toString(16).slice(2)}`,
+                            trade_id: `rfq-${now}-${Math.random().toString(16).slice(2, 10)}`,
+                            btc_sats: Number((last as any).btc_sats) || 0,
+                            usdt_amount: String((last as any).usdt_amount || ''),
+                          },
+                        ]);
+                      })
+                    }
+                    disabled={rfqBusy || rfqLines.length >= 20}
+                  >
+                    + Add line
+                  </button>
+                </div>
               </div>
-
-                <div className="gridform">
-	                  <div className="field">
-	                    <div className="field-hd">
-	                    <span className="mono">Pay BTC (Lightning)</span>
-	                    </div>
-	                    <BtcSatsField name="rfq_btc" sats={rfqBtcSats} onSats={(n) => setRfqBtcSats(n || 0)} />
-	                  </div>
-	                  <div className="field">
-	                    <div className="field-hd">
-	                    <span className="mono">Receive USDT (Solana)</span>
-	                    </div>
-	                    <UsdtAtomicField
-	                      decimals={6}
-	                      atomic={rfqUsdtAtomic}
-	                    onAtomic={(a) => setRfqUsdtAtomic(a || '')}
-	                    placeholder="10"
-	                  />
-	                </div>
-	              </div>
-	              {(() => {
-	                const btcBtc = Number.isFinite(rfqBtcSats) ? rfqBtcSats / 1e8 : null;
-	                const usdt = String(rfqUsdtAtomic || '').trim() ? atomicToNumber(String(rfqUsdtAtomic || '').trim(), 6) : null;
-	                const implied = btcBtc && btcBtc > 0 && usdt !== null ? usdt / btcBtc : null;
-	                const btcUsd = btcBtc !== null && oracle.btc_usd ? btcBtc * oracle.btc_usd : null;
-	                const usdtUsd = usdt !== null && oracle.usdt_usd ? usdt * oracle.usdt_usd : null;
-	                if (implied === null && btcUsd === null && usdtUsd === null) return null;
-	                return (
-	                  <div className="muted small" style={{ marginTop: 6 }}>
-	                    {typeof implied === 'number' && Number.isFinite(implied) ? (
-	                      <span>
-	                        implied: <span className="mono">{implied.toFixed(2)}</span> USDT/BTC
-	                      </span>
-	                    ) : null}
-	                    {btcUsd !== null ? (
-	                      <span>
-	                        {implied !== null ? ' · ' : ''}
-	                        BTC value: <span className="mono">{fmtUsd(btcUsd)}</span>
-	                      </span>
-	                    ) : null}
-	                    {usdtUsd !== null ? (
-	                      <span>
-	                        {(implied !== null || btcUsd !== null) ? ' · ' : ''}
-	                        USDT value: <span className="mono">{fmtUsd(usdtUsd)}</span>
-	                      </span>
-	                    ) : null}
-	                  </div>
-	                );
-	              })()}
 
 	              <div className="field">
 	                <div className="field-hd">
 	                  <span className="mono">Fee Caps</span>
 	                </div>
                 <div className="gridform">
-                  <PctBpsField
-                    label="platform"
-                    maxBps={500}
-                    bps={rfqMaxPlatformFeeBps}
-                    onBps={(n) => setRfqMaxPlatformFeeBps(n ?? 0)}
-                  />
+                  <div className="amt">
+                    <div className="muted small">platform (fixed)</div>
+                    <div className="mono">{bpsToPctDisplay(rfqMaxPlatformFeeBps)}%</div>
+                    <div className="muted small">
+                      bps: <span className="mono">{rfqMaxPlatformFeeBps}</span>
+                    </div>
+                  </div>
                   <PctBpsField
                     label="trade"
                     maxBps={1000}
@@ -3058,9 +3218,7 @@ function App() {
                     onBps={(n) => setRfqMaxTotalFeeBps(n ?? 0)}
                   />
                 </div>
-                <div className="muted small">
-                  total must be &gt;= platform + trade.
-                </div>
+                <div className="muted small">platform fee comes from the Solana program config (not negotiated). total must be &gt;= platform + trade.</div>
               </div>
 
               <div className="field">
@@ -3207,17 +3365,25 @@ function App() {
 	                      </span>
 	                      <button
 	                        className="btn small"
-	                        onClick={() => {
-	                          try {
-	                            const a = j?.args && typeof j.args === 'object' ? j.args : null;
-	                            if (typeof a?.channel === 'string') setRfqChannel(a.channel);
-	                            if (typeof a?.trade_id === 'string') setRfqTradeId(a.trade_id);
-	                            if (typeof a?.btc_sats === 'number') setRfqBtcSats(a.btc_sats);
-	                            if (typeof a?.usdt_amount === 'string') setRfqUsdtAtomic(a.usdt_amount);
-	                            if (typeof a?.max_platform_fee_bps === 'number') setRfqMaxPlatformFeeBps(a.max_platform_fee_bps);
-	                            if (typeof a?.max_trade_fee_bps === 'number') setRfqMaxTradeFeeBps(a.max_trade_fee_bps);
-	                            if (typeof a?.max_total_fee_bps === 'number') setRfqMaxTotalFeeBps(a.max_total_fee_bps);
-	                            if (typeof a?.min_sol_refund_window_sec === 'number') setRfqMinSolRefundWindowSec(a.min_sol_refund_window_sec);
+		                        onClick={() => {
+		                          try {
+		                            const a = j?.args && typeof j.args === 'object' ? j.args : null;
+		                            if (typeof a?.channel === 'string') setRfqChannel(a.channel);
+		                            const tradeIdRaw = typeof a?.trade_id === 'string' ? a.trade_id.trim() : '';
+		                            const trade_id = tradeIdRaw || `rfq-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+		                            const btc_sats = typeof a?.btc_sats === 'number' ? a.btc_sats : 10_000;
+		                            const usdt_amount = typeof a?.usdt_amount === 'string' ? a.usdt_amount : '1000000';
+		                            setRfqLines([
+		                              {
+		                                id: `loaded-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+		                                trade_id,
+		                                btc_sats,
+		                                usdt_amount,
+		                              },
+		                            ]);
+		                            if (typeof a?.max_trade_fee_bps === 'number') setRfqMaxTradeFeeBps(a.max_trade_fee_bps);
+		                            if (typeof a?.max_total_fee_bps === 'number') setRfqMaxTotalFeeBps(a.max_total_fee_bps);
+		                            if (typeof a?.min_sol_refund_window_sec === 'number') setRfqMinSolRefundWindowSec(a.min_sol_refund_window_sec);
 	                            if (typeof a?.max_sol_refund_window_sec === 'number') setRfqMaxSolRefundWindowSec(a.max_sol_refund_window_sec);
 	                            setRfqRunAsBot(true);
 	                            const intv = Number(j?.interval_sec || 0);
@@ -3636,6 +3802,82 @@ function App() {
                 </div>
               </div>
 
+              <div className="field">
+                <div className="field-hd">
+                  <span className="mono">Send BTC (on-chain)</span>
+                </div>
+                <div className="muted small">Withdraw BTC from the LN node wallet to a BTC address.</div>
+                <div className="row">
+                  <input
+                    className="input mono"
+                    value={lnWithdrawTo}
+                    onChange={(e) => setLnWithdrawTo(e.target.value)}
+                    placeholder="destination BTC address"
+                  />
+                </div>
+                <div className="gridform">
+                  <div className="field">
+                    <div className="field-hd">
+                      <span className="mono">amount</span>
+                    </div>
+                    <BtcSatsField name="ln_withdraw_amount" sats={lnWithdrawAmountSats} onSats={(n) => setLnWithdrawAmountSats(n)} />
+                  </div>
+                  <div className="field">
+                    <div className="field-hd">
+                      <span className="mono">fee rate</span>
+                      <span className="muted small">sat/vB</span>
+                    </div>
+                    <input
+                      className="input mono"
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={String(lnWithdrawSatPerVbyte)}
+                      onChange={(e) => {
+                        const n = Number.parseInt(e.target.value, 10);
+                        if (Number.isFinite(n)) setLnWithdrawSatPerVbyte(Math.max(1, Math.min(10000, Math.trunc(n))));
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="row">
+                  <button
+                    className="btn primary"
+                    disabled={
+                      runBusy ||
+                      !lnWithdrawTo.trim() ||
+                      !Number.isInteger(lnWithdrawAmountSats) ||
+                      Number(lnWithdrawAmountSats || 0) <= 0
+                    }
+                    onClick={async () => {
+                      const address = lnWithdrawTo.trim();
+                      const amount_sats = Number(lnWithdrawAmountSats || 0);
+                      const sat_per_vbyte = Number(lnWithdrawSatPerVbyte || 0);
+                      if (toolRequiresApproval('intercomswap_ln_withdraw') && !autoApprove) {
+                        const ok = window.confirm(
+                          `Send BTC now?\n\naddress: ${address}\namount_sats: ${amount_sats}\nfee: ${sat_per_vbyte} sat/vB`
+                        );
+                        if (!ok) return;
+                      }
+                      try {
+                        const out = await runDirectToolOnce(
+                          'intercomswap_ln_withdraw',
+                          { address, amount_sats, sat_per_vbyte: sat_per_vbyte > 0 ? sat_per_vbyte : undefined },
+                          { auto_approve: true }
+                        );
+                        const txid = String(out?.txid || out?.tx_id || out?.tx || out?.hash || '').trim();
+                        pushToast('success', `BTC sent${txid ? ` (txid ${txid.slice(0, 12)}…)` : ''}`);
+                        void refreshPreflight();
+                      } catch (e: any) {
+                        pushToast('error', e?.message || String(e));
+                      }
+                    }}
+                  >
+                    Send BTC
+                  </button>
+                </div>
+              </div>
+
               {!(String(envInfo?.ln?.backend || '') === 'docker' && String(envInfo?.ln?.network || '') === 'regtest') ? (
                 <div className="field">
                   <div className="field-hd">
@@ -3767,6 +4009,148 @@ function App() {
                     }}
                   >
                     Refresh SOL balance
+                  </button>
+                </div>
+              </div>
+
+              <div className="field">
+                <div className="field-hd">
+                  <span className="mono">USDT Balance (SPL)</span>
+                </div>
+                <div className="muted small">
+                  Enter the USDT mint you’re using for swaps. Most local/dev setups use a test mint with <span className="mono">decimals=6</span>.
+                </div>
+                <div className="row">
+                  <input
+                    className="input mono"
+                    value={walletUsdtMint}
+                    onChange={(e) => setWalletUsdtMint(e.target.value)}
+                    placeholder="USDT mint (base58)"
+                  />
+                  <button className="btn" disabled={!walletUsdtMint.trim()} onClick={() => copyToClipboard('usdt mint', walletUsdtMint.trim())}>
+                    Copy
+                  </button>
+                </div>
+                {walletUsdtErr ? <div className="alert bad">{walletUsdtErr}</div> : null}
+                {walletUsdtAtomic ? (
+                  <div className="muted small">
+                    balance: <span className="mono">{atomicToDecimal(walletUsdtAtomic, 6)} USDT</span> (<span className="mono">{walletUsdtAtomic}</span>)
+                    {walletUsdtAta ? (
+                      <>
+                        {' '}· ATA: <span className="mono">{walletUsdtAta.slice(0, 12)}…</span>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="row">
+                  <button
+                    className="btn primary"
+                    disabled={runBusy || !solSignerPubkey || !walletUsdtMint.trim()}
+                    onClick={async () => {
+                      try {
+                        const out = await runDirectToolOnce(
+                          'intercomswap_sol_token_balance',
+                          { owner: solSignerPubkey, mint: walletUsdtMint.trim() },
+                          { auto_approve: false }
+                        );
+                        setWalletUsdtAta(String(out?.ata || '').trim() || null);
+                        setWalletUsdtAtomic(String(out?.amount || '').trim() || '0');
+                        setWalletUsdtErr(null);
+                      } catch (e: any) {
+                        setWalletUsdtErr(e?.message || String(e));
+                      }
+                    }}
+                  >
+                    Refresh USDT balance
+                  </button>
+                </div>
+              </div>
+
+              <div className="field">
+                <div className="field-hd">
+                  <span className="mono">Send SOL</span>
+                </div>
+                <div className="row">
+                  <input className="input mono" value={solSendTo} onChange={(e) => setSolSendTo(e.target.value)} placeholder="to pubkey (base58)" />
+                </div>
+                <div className="field" style={{ marginTop: 8 }}>
+                  <div className="field-hd">
+                    <span className="mono">amount (SOL)</span>
+                  </div>
+                  <UsdtAtomicField decimals={9} atomic={solSendLamports} onAtomic={(a) => setSolSendLamports(a)} placeholder="0.01" />
+                </div>
+                <div className="row">
+                  <button
+                    className="btn primary"
+                    disabled={runBusy || !solSendTo.trim() || !String(solSendLamports || '').trim()}
+                    onClick={async () => {
+                      const to = solSendTo.trim();
+                      const lamports = String(solSendLamports || '').trim();
+                      if (toolRequiresApproval('intercomswap_sol_transfer_sol') && !autoApprove) {
+                        const ok = window.confirm(`Send SOL now?\n\nto: ${to}\nlamports: ${lamports}`);
+                        if (!ok) return;
+                      }
+                      try {
+                        const out = await runDirectToolOnce('intercomswap_sol_transfer_sol', { to, lamports }, { auto_approve: true });
+                        const sig = String(out?.tx_sig || out?.sig || '').trim();
+                        pushToast('success', `SOL sent${sig ? ` (${sig.slice(0, 10)}…)` : ''}`);
+                        void refreshPreflight();
+                      } catch (e: any) {
+                        pushToast('error', e?.message || String(e));
+                      }
+                    }}
+                  >
+                    Send SOL
+                  </button>
+                </div>
+              </div>
+
+              <div className="field">
+                <div className="field-hd">
+                  <span className="mono">Send USDT (SPL)</span>
+                </div>
+                <div className="muted small">Uses the mint above. Amount is entered in USDT (decimals=6).</div>
+                <div className="row">
+                  <input
+                    className="input mono"
+                    value={usdtSendToOwner}
+                    onChange={(e) => setUsdtSendToOwner(e.target.value)}
+                    placeholder="to owner pubkey (base58)"
+                  />
+                </div>
+                <div className="field" style={{ marginTop: 8 }}>
+                  <div className="field-hd">
+                    <span className="mono">amount (USDT)</span>
+                  </div>
+                  <UsdtAtomicField decimals={6} atomic={usdtSendAtomic} onAtomic={(a) => setUsdtSendAtomic(a)} placeholder="10" />
+                </div>
+                <div className="row">
+                  <button
+                    className="btn primary"
+                    disabled={runBusy || !walletUsdtMint.trim() || !usdtSendToOwner.trim() || !String(usdtSendAtomic || '').trim()}
+                    onClick={async () => {
+                      const mint = walletUsdtMint.trim();
+                      const to_owner = usdtSendToOwner.trim();
+                      const amount = String(usdtSendAtomic || '').trim();
+                      if (toolRequiresApproval('intercomswap_sol_token_transfer') && !autoApprove) {
+                        const ok = window.confirm(`Send USDT now?\n\nmint: ${mint}\nto_owner: ${to_owner}\namount: ${amount}`);
+                        if (!ok) return;
+                      }
+                      try {
+                        const out = await runDirectToolOnce(
+                          'intercomswap_sol_token_transfer',
+                          { mint, to_owner, amount, create_ata: true },
+                          { auto_approve: true }
+                        );
+                        const sig = String(out?.tx_sig || out?.sig || '').trim();
+                        pushToast('success', `USDT sent${sig ? ` (${sig.slice(0, 10)}…)` : ''}`);
+                        void refreshPreflight();
+                      } catch (e: any) {
+                        pushToast('error', e?.message || String(e));
+                      }
+                    }}
+                  >
+                    Send USDT
                   </button>
                 </div>
               </div>

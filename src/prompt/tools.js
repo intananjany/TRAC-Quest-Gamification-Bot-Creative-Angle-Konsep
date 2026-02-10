@@ -391,7 +391,7 @@ export const INTERCOMSWAP_TOOLS = [
   }),
   tool(
     'intercomswap_quote_post',
-    'Post a signed QUOTE envelope into an RFQ channel (references an RFQ id). Provide either valid_until_unix or valid_for_sec.',
+    'Post a signed QUOTE envelope into an RFQ channel (references an RFQ id). Fees are read from on-chain config/trade-config (not negotiated). Provide either valid_until_unix or valid_for_sec.',
     {
     type: 'object',
     additionalProperties: false,
@@ -401,20 +401,17 @@ export const INTERCOMSWAP_TOOLS = [
       rfq_id: hex32Param,
       btc_sats: satsParam,
       usdt_amount: atomicAmountParam,
-      platform_fee_bps: { type: 'integer', minimum: 0, maximum: 500 },
-      trade_fee_bps: { type: 'integer', minimum: 0, maximum: 1000 },
-      trade_fee_collector: base58Param,
-      platform_fee_collector: { ...base58Param, description: 'Optional override, else use program config fee collector.' },
+      trade_fee_collector: { ...base58Param, description: 'Fee receiver pubkey. trade_fee_bps is read from the trade-config PDA for this address.' },
       sol_refund_window_sec: { type: 'integer', minimum: 3600, maximum: 7 * 24 * 3600, description: 'Solana refund/claim window (seconds) that will be used in binding TERMS.' },
       valid_until_unix: unixSecParam,
       valid_for_sec: { type: 'integer', minimum: 10, maximum: 60 * 60 * 24 * 7 },
     },
-    required: ['channel', 'trade_id', 'rfq_id', 'btc_sats', 'usdt_amount', 'platform_fee_bps', 'trade_fee_bps', 'trade_fee_collector'],
+    required: ['channel', 'trade_id', 'rfq_id', 'btc_sats', 'usdt_amount', 'trade_fee_collector'],
   }
   ),
   tool(
     'intercomswap_quote_post_from_rfq',
-    'Maker: post a signed QUOTE that matches an RFQ envelope (no manual rfq_id/btc_sats/usdt_amount required). Provide either valid_until_unix or valid_for_sec.',
+    'Maker: post a signed QUOTE that matches an RFQ envelope (no manual rfq_id/btc_sats/usdt_amount required). Fees are read from on-chain config/trade-config (not negotiated). Provide either valid_until_unix or valid_for_sec.',
     {
       type: 'object',
       additionalProperties: false,
@@ -426,15 +423,12 @@ export const INTERCOMSWAP_TOOLS = [
             { type: 'string', pattern: '^secret:[0-9a-fA-F-]{10,}$', description: 'Secret handle to an RFQ envelope.' },
           ],
         },
-        platform_fee_bps: { type: 'integer', minimum: 0, maximum: 500 },
-        trade_fee_bps: { type: 'integer', minimum: 0, maximum: 1000 },
-        trade_fee_collector: base58Param,
-        platform_fee_collector: { ...base58Param, description: 'Optional override, else use program config fee collector.' },
+        trade_fee_collector: { ...base58Param, description: 'Fee receiver pubkey. trade_fee_bps is read from the trade-config PDA for this address.' },
         sol_refund_window_sec: { type: 'integer', minimum: 3600, maximum: 7 * 24 * 3600, description: 'Solana refund/claim window (seconds) that will be used in binding TERMS.' },
         valid_until_unix: unixSecParam,
         valid_for_sec: { type: 'integer', minimum: 10, maximum: 60 * 60 * 24 * 7 },
       },
-      required: ['channel', 'rfq_envelope', 'platform_fee_bps', 'trade_fee_bps', 'trade_fee_collector'],
+      required: ['channel', 'rfq_envelope', 'trade_fee_collector'],
     }
   ),
   tool('intercomswap_quote_accept', 'Post a signed QUOTE_ACCEPT envelope into the RFQ channel (accept a quote).', {
@@ -606,10 +600,7 @@ export const INTERCOMSWAP_TOOLS = [
       sol_refund_after_unix: unixSecParam,
       ln_receiver_peer: hex32Param,
       ln_payer_peer: hex32Param,
-      platform_fee_bps: { type: 'integer', minimum: 0, maximum: 500 },
-      trade_fee_bps: { type: 'integer', minimum: 0, maximum: 1000 },
-      trade_fee_collector: base58Param,
-      platform_fee_collector: { ...base58Param, description: 'Optional override, else use program config fee collector.' },
+      trade_fee_collector: { ...base58Param, description: 'Fee receiver pubkey. trade_fee_bps is read from the trade-config PDA for this address.' },
       terms_valid_until_unix: { ...unixSecParam, description: 'Optional expiry for terms acceptance.' },
     },
     required: [
@@ -623,8 +614,6 @@ export const INTERCOMSWAP_TOOLS = [
       'sol_refund_after_unix',
       'ln_receiver_peer',
       'ln_payer_peer',
-      'platform_fee_bps',
-      'trade_fee_bps',
       'trade_fee_collector',
     ],
   }),
@@ -809,7 +798,7 @@ export const INTERCOMSWAP_TOOLS = [
   }),
   tool(
     'intercomswap_swap_sol_escrow_init_and_post',
-    'Maker: init Solana escrow and post SOL_ESCROW_CREATED into swap:<id>.',
+    'Maker: init Solana escrow and post SOL_ESCROW_CREATED into swap:<id>. Fees are read from on-chain config/trade-config (not negotiated).',
     {
       type: 'object',
       additionalProperties: false,
@@ -822,9 +811,7 @@ export const INTERCOMSWAP_TOOLS = [
         recipient: base58Param,
         refund: base58Param,
         refund_after_unix: unixSecParam,
-        platform_fee_bps: { type: 'integer', minimum: 0, maximum: 500 },
-        trade_fee_bps: { type: 'integer', minimum: 0, maximum: 1000 },
-        trade_fee_collector: base58Param,
+        trade_fee_collector: { ...base58Param, description: 'Fee receiver pubkey. trade_fee_bps is read from the trade-config PDA for this address.' },
       },
       required: [
         'channel',
@@ -835,8 +822,6 @@ export const INTERCOMSWAP_TOOLS = [
         'recipient',
         'refund',
         'refund_after_unix',
-        'platform_fee_bps',
-        'trade_fee_bps',
         'trade_fee_collector',
       ],
     }
@@ -1075,7 +1060,7 @@ export const INTERCOMSWAP_TOOLS = [
     },
     required: ['payment_hash_hex', 'mint'],
   }),
-  tool('intercomswap_sol_escrow_init', 'Initialize an escrow locked to LN payment_hash.', {
+  tool('intercomswap_sol_escrow_init', 'Initialize an escrow locked to LN payment_hash. Fees are read from on-chain config/trade-config (not negotiated).', {
     type: 'object',
     additionalProperties: false,
     properties: {
@@ -1085,10 +1070,7 @@ export const INTERCOMSWAP_TOOLS = [
       recipient: base58Param,
       refund: base58Param,
       refund_after_unix: unixSecParam,
-      platform_fee_bps: { type: 'integer', minimum: 0, maximum: 500 },
-      trade_fee_bps: { type: 'integer', minimum: 0, maximum: 1000 },
-      trade_fee_collector: base58Param,
-      platform_fee_collector: { ...base58Param, description: 'Optional override, else use program config.' },
+      trade_fee_collector: { ...base58Param, description: 'Fee receiver pubkey. trade_fee_bps is read from the trade-config PDA for this address.' },
     },
     required: [
       'payment_hash_hex',
@@ -1097,8 +1079,6 @@ export const INTERCOMSWAP_TOOLS = [
       'recipient',
       'refund',
       'refund_after_unix',
-      'platform_fee_bps',
-      'trade_fee_bps',
       'trade_fee_collector',
     ],
   }),

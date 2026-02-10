@@ -704,8 +704,6 @@ test('e2e: promptd direct-tool mode drives full swap (LN regtest <-> Solana escr
       args: {
         channel: rfqChannel,
         rfq_envelope: rfqSeen.envelope_handle,
-        platform_fee_bps: 50,
-        trade_fee_bps: 50,
         trade_fee_collector: makerSolPk,
         valid_for_sec: 60,
       },
@@ -814,8 +812,6 @@ test('e2e: promptd direct-tool mode drives full swap (LN regtest <-> Solana escr
       sol_refund_after_unix: refundAfterUnix,
       ln_receiver_peer: makerPeerHex,
       ln_payer_peer: takerPeerHex,
-      platform_fee_bps: 50,
-      trade_fee_bps: 50,
       trade_fee_collector: makerSolPk,
       terms_valid_until_unix: nowSec + 300,
     },
@@ -880,8 +876,6 @@ test('e2e: promptd direct-tool mode drives full swap (LN regtest <-> Solana escr
       recipient: takerSolPk,
       refund: makerSolPk,
       refund_after_unix: refundAfterUnix,
-      platform_fee_bps: 50,
-      trade_fee_bps: 50,
       trade_fee_collector: makerSolPk,
     },
   });
