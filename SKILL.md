@@ -405,6 +405,7 @@ Recommended control path (most robust): have OpenClaw invoke deterministic scrip
 - `scripts/peermgr.*` to start/stop/restart peers (SC-Bridge enabled)
 - `scripts/rfqbotmgr.*` to start/stop/restart RFQ bots
 - `scripts/promptctl.*` to execute **structured tool calls** through `promptd`
+- backend trade worker tools (`intercomswap_tradeauto_*`) for multi-trade orchestration
 
 `promptd` tool gateway:
 - Discover tools: `GET /v1/tools`
@@ -436,6 +437,8 @@ A→Z operating flow:
    - `intercomswap_sc_info` (confirm peer pubkey and joined channels)
 2. Start stack (or peer-only if already running)
    - Preferred: `intercomswap_stack_start` with explicit `peer_name`, `peer_store`, `sc_port`, `sidechannels`, and bootstrap flags for your environment.
+   - `intercomswap_stack_start` auto-starts backend trade automation by default. Verify with `intercomswap_tradeauto_status`.
+   - Reconfigure automation explicitly (channels, liquidity mode, refund defaults, enable/disable stages) with `intercomswap_tradeauto_start`.
    - If already running, validate readiness with:
      - `intercomswap_ln_info`
      - `intercomswap_ln_listfunds`
@@ -483,13 +486,14 @@ A→Z operating flow:
    - Post RFQ: `intercomswap_rfq_post`.
    - Optional periodic repost: `intercomswap_autopost_start` using `tool=intercomswap_rfq_post`.
    - Manage repost jobs: `intercomswap_autopost_status`, `intercomswap_autopost_stop`.
-7. Negotiation and swap execution (deterministic sequence)
-   - Quote from RFQ: `intercomswap_quote_post_from_rfq`
-   - Accept quote: `intercomswap_quote_accept`
-   - Invite into private swap channel: `intercomswap_swap_invite_from_accept`
-   - Join invited swap channel: `intercomswap_join_from_swap_invite`
-   - Bind final terms in swap channel: `intercomswap_terms_post`
-   - Settlement:
+7. Negotiation and swap execution (deterministic)
+   - Preferred (backend worker): keep `intercomswap_tradeauto_start` running and let it orchestrate quote/accept/invite/join + settlement stages.
+   - Manual fallback (same deterministic tools):
+     - `intercomswap_quote_post_from_rfq`
+     - `intercomswap_quote_accept`
+     - `intercomswap_swap_invite_from_accept`
+     - `intercomswap_join_from_swap_invite`
+     - `intercomswap_terms_post`
      - `intercomswap_swap_ln_invoice_create_and_post`
      - `intercomswap_swap_sol_escrow_init_and_post`
      - `intercomswap_swap_ln_pay_and_post_verified`
@@ -503,6 +507,8 @@ A→Z operating flow:
    - Stop/restart peer/bots with managers:
      - `intercomswap_peer_stop`, `intercomswap_peer_restart`
      - `intercomswap_rfqbot_stop`, `intercomswap_rfqbot_restart`
+   - Stop/restart backend trade worker as needed:
+     - `intercomswap_tradeauto_status`, `intercomswap_tradeauto_stop`, `intercomswap_tradeauto_start`
    - Full local stop: `intercomswap_stack_stop`
 
 Mandatory safeguards for OpenClaw operation:
@@ -511,6 +517,7 @@ Mandatory safeguards for OpenClaw operation:
 - Treat platform fees as on-chain config driven (not operator-negotiated).
 - Stop repost bots if offers/RFQs are no longer fundable.
 - Record every trade via receipts DB and use recovery tools instead of ad-hoc manual actions.
+- Keep automation deterministic and server-side: do not reintroduce client-side trade orchestration loops.
 
 ## Quick Start (Clone + Run)
 Use Pear runtime only (never native node).

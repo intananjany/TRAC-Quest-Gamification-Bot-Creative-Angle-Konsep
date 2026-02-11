@@ -28,6 +28,7 @@ import { hashUnsignedEnvelope, sha256Hex } from '../swap/hash.js';
 import { hashTermsEnvelope } from '../swap/terms.js';
 import { verifySwapPrePayOnchain } from '../swap/verify.js';
 import { AutopostManager } from './autopost.js';
+import { TradeAutoManager } from './tradeAuto.js';
 import { repairToolArguments } from './repair.js';
 import {
   createSignedWelcome,
@@ -883,6 +884,17 @@ export class ToolExecutor {
 	        return out.slice(0, n);
 	      },
 	    });
+
+    this._tradeAuto = new TradeAutoManager({
+      runTool: async ({ tool, args }) => this.execute(tool, args, { autoApprove: true, dryRun: false, secrets: null }),
+      scLogInfo: () => this.scLogInfo(),
+      scLogRead: (opts) => this.scLogRead(opts || {}),
+      logger: (msg) => {
+        try {
+          process.stderr.write(`${String(msg || '').trim()}\n`);
+        } catch (_e) {}
+      },
+    });
 	  }
 
   _pool() {
@@ -1213,6 +1225,95 @@ export class ToolExecutor {
       const name = expectString(args, toolName, 'name', { min: 1, max: 64, pattern: /^[A-Za-z0-9._-]+$/ });
       if (dryRun) return { type: 'dry_run', tool: toolName, name };
       return await this._autopost.stop({ name });
+    }
+
+    // Backend multi-trade automation manager (replaces client-side auto orchestration).
+    if (toolName === 'intercomswap_tradeauto_status') {
+      assertAllowedKeys(args, toolName, []);
+      return this._tradeAuto.status();
+    }
+    if (toolName === 'intercomswap_tradeauto_start') {
+      assertAllowedKeys(args, toolName, [
+        'channels',
+        'interval_ms',
+        'max_events',
+        'max_trades',
+        'event_max_age_ms',
+        'default_sol_refund_window_sec',
+        'welcome_ttl_sec',
+        'ln_liquidity_mode',
+        'usdt_mint',
+        'enable_quote_from_offers',
+        'enable_accept_quotes',
+        'enable_invite_from_accepts',
+        'enable_join_invites',
+        'enable_settlement',
+        'sol_cu_limit',
+        'sol_cu_price',
+      ]);
+      requireApproval(toolName, autoApprove);
+      const parseChannels = (value, label) => {
+        if (!Array.isArray(value)) return [];
+        const out = [];
+        for (const entry of value) {
+          const ch = normalizeChannelName(String(entry || '').trim());
+          if (!ch) continue;
+          out.push(ch);
+        }
+        const uniq = Array.from(new Set(out));
+        if (uniq.length > 64) throw new Error(`${toolName}: ${label} too long`);
+        return uniq;
+      };
+      const channels = parseChannels(args.channels, 'channels');
+      const intervalMs = expectOptionalInt(args, toolName, 'interval_ms', { min: 250, max: 10_000 });
+      const maxEvents = expectOptionalInt(args, toolName, 'max_events', { min: 200, max: 4_000 });
+      const maxTrades = expectOptionalInt(args, toolName, 'max_trades', { min: 10, max: 500 });
+      const eventMaxAgeMs = expectOptionalInt(args, toolName, 'event_max_age_ms', { min: 30_000, max: 60 * 60 * 1000 });
+      const defaultRefundSec = expectOptionalInt(args, toolName, 'default_sol_refund_window_sec', { min: 3600, max: 7 * 24 * 3600 });
+      const welcomeTtlSec = expectOptionalInt(args, toolName, 'welcome_ttl_sec', { min: 30, max: 7 * 24 * 3600 });
+      const lnLiquidityModeRaw = expectOptionalString(args, toolName, 'ln_liquidity_mode', { min: 1, max: 32 });
+      const lnLiquidityMode = lnLiquidityModeRaw ? String(lnLiquidityModeRaw).trim().toLowerCase() : '';
+      if (lnLiquidityMode && lnLiquidityMode !== 'aggregate' && lnLiquidityMode !== 'single_channel') {
+        throw new Error(`${toolName}: ln_liquidity_mode must be aggregate or single_channel`);
+      }
+      const usdtMint = expectOptionalString(args, toolName, 'usdt_mint', { min: 32, max: 64, pattern: /^[1-9A-HJ-NP-Za-km-z]+$/ });
+      const enableQuote = 'enable_quote_from_offers' in args ? expectBool(args, toolName, 'enable_quote_from_offers') : undefined;
+      const enableAccept = 'enable_accept_quotes' in args ? expectBool(args, toolName, 'enable_accept_quotes') : undefined;
+      const enableInvite = 'enable_invite_from_accepts' in args ? expectBool(args, toolName, 'enable_invite_from_accepts') : undefined;
+      const enableJoin = 'enable_join_invites' in args ? expectBool(args, toolName, 'enable_join_invites') : undefined;
+      const enableSettlement = 'enable_settlement' in args ? expectBool(args, toolName, 'enable_settlement') : undefined;
+      const solCuLimit = expectOptionalInt(args, toolName, 'sol_cu_limit', { min: 0, max: 1_400_000 });
+      const solCuPrice = expectOptionalInt(args, toolName, 'sol_cu_price', { min: 0, max: 1_000_000_000 });
+
+      const effectiveChannels = channels.length > 0 ? channels : ['0000intercomswapbtcusdt'];
+      const opts = {
+        channels: effectiveChannels,
+        ...(intervalMs !== null ? { interval_ms: intervalMs } : {}),
+        ...(maxEvents !== null ? { max_events: maxEvents } : {}),
+        ...(maxTrades !== null ? { max_trades: maxTrades } : {}),
+        ...(eventMaxAgeMs !== null ? { event_max_age_ms: eventMaxAgeMs } : {}),
+        ...(defaultRefundSec !== null ? { default_sol_refund_window_sec: defaultRefundSec } : {}),
+        ...(welcomeTtlSec !== null ? { welcome_ttl_sec: welcomeTtlSec } : {}),
+        ...(lnLiquidityMode ? { ln_liquidity_mode: lnLiquidityMode } : {}),
+        ...(usdtMint ? { usdt_mint: usdtMint } : {}),
+        ...(enableQuote !== undefined ? { enable_quote_from_offers: enableQuote } : {}),
+        ...(enableAccept !== undefined ? { enable_accept_quotes: enableAccept } : {}),
+        ...(enableInvite !== undefined ? { enable_invite_from_accepts: enableInvite } : {}),
+        ...(enableJoin !== undefined ? { enable_join_invites: enableJoin } : {}),
+        ...(enableSettlement !== undefined ? { enable_settlement: enableSettlement } : {}),
+        ...(solCuLimit !== null ? { sol_cu_limit: solCuLimit } : {}),
+        ...(solCuPrice !== null ? { sol_cu_price: solCuPrice } : {}),
+      };
+
+      if (dryRun) return { type: 'dry_run', tool: toolName, ...opts };
+      return await this._tradeAuto.start(opts);
+    }
+    if (toolName === 'intercomswap_tradeauto_stop') {
+      assertAllowedKeys(args, toolName, ['reason']);
+      requireApproval(toolName, autoApprove);
+      const reason = expectOptionalString(args, toolName, 'reason', { min: 1, max: 200 }) || 'stopped';
+      if (dryRun) return { type: 'dry_run', tool: toolName, reason };
+      return await this._tradeAuto.stop({ reason });
     }
 
     if (toolName === 'intercomswap_env_get') {
@@ -1792,6 +1893,34 @@ export class ToolExecutor {
         solErr = err?.message ?? String(err);
       }
 
+      const autoChannels = sidechannels.length > 0 ? sidechannels : ['0000intercomswapbtcusdt'];
+      let tradeAutoOut = null;
+      try {
+        if (this._tradeAuto?.running) {
+          await this._tradeAuto.stop({ reason: 'stack_start_reconfigure' });
+        }
+        tradeAutoOut = await this._tradeAuto.start({
+          channels: autoChannels,
+          interval_ms: 1000,
+          max_events: 1800,
+          max_trades: 160,
+          event_max_age_ms: 10 * 60 * 1000,
+          default_sol_refund_window_sec: 72 * 3600,
+          welcome_ttl_sec: 3600,
+          ln_liquidity_mode: 'aggregate',
+          usdt_mint: String(this.solana?.usdtMint || '').trim(),
+          enable_quote_from_offers: true,
+          enable_accept_quotes: true,
+          enable_invite_from_accepts: true,
+          enable_join_invites: true,
+          enable_settlement: true,
+          sol_cu_limit: this.solana?.computeUnitLimit ?? null,
+          sol_cu_price: this.solana?.computeUnitPriceMicroLamports ?? null,
+        });
+      } catch (err) {
+        tradeAutoOut = { type: 'tradeauto_start_error', error: err?.message ?? String(err) };
+      }
+
       return {
         type: 'stack_started',
         peer: peerOut,
@@ -1800,6 +1929,7 @@ export class ToolExecutor {
         ln_error: lnErr,
         solana: solOut,
         solana_error: solErr,
+        trade_auto: tradeAutoOut,
       };
     }
 
@@ -1880,7 +2010,14 @@ export class ToolExecutor {
         solOut = { type: 'sol_stop_skipped' };
       }
 
-      return { type: 'stack_stopped', peer: peerOut, ln: lnOut, solana: solOut };
+      let tradeAutoOut = null;
+      try {
+        tradeAutoOut = await this._tradeAuto.stop({ reason: 'stack_stop' });
+      } catch (err) {
+        tradeAutoOut = { type: 'tradeauto_stop_error', error: err?.message ?? String(err) };
+      }
+
+      return { type: 'stack_stopped', peer: peerOut, ln: lnOut, solana: solOut, trade_auto: tradeAutoOut };
     }
 
     // Read-only SC-Bridge

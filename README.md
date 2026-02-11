@@ -120,7 +120,7 @@ Recommended:
 - OpenAI: **GPT-5.3+** (Codex, `xhigh`)
 - Anthropic: **Claude Opus 4.6+**
 
-OpenClaw can use and control this stack autonomously (install/upgrade via `SKILL.md`, ops via scripts and optional `promptd` tool calls).
+OpenClaw can use and control this stack autonomously (install/upgrade via `SKILL.md`, ops via scripts and optional `promptd` tool calls, including backend worker tools `intercomswap_tradeauto_*`).
 
 Local/open-weight models can work too, but use a high-grade one.
 
@@ -178,7 +178,7 @@ I’m operating Collin and I’m stuck: “<paste error>”. Explain what it mea
 Rendezvous sidechannel(s) (any; examples: 0000intercom, 0000intercomswapbtcusdt, my-swap-room)
     |
     | swap.svc_announce (service + offers[])  [periodic rebroadcast; sidechannels have no history]
-    | Offer (optional) -> RFQ (manual or auto-from-offer) -> QUOTE -> QUOTE_ACCEPT
+    | Offer (optional) -> RFQ (manual or backend-auto-from-offer) -> QUOTE -> QUOTE_ACCEPT
     |   - pre-filter by app_hash + fee caps + refund window
     v
 per-trade invite-only swap:<trade_id>
@@ -689,6 +689,9 @@ Recently added/changed tools and guardrails:
 - `intercomswap_rfq_post` / `intercomswap_quote_accept`: support `ln_liquidity_mode` (`single_channel` or `aggregate`).
 - `intercomswap_quote_accept`: embeds a signed best-effort `ln_liquidity_hint` in the accept envelope.
 - `intercomswap_swap_invite_from_accept`: optional `quote_envelope` argument enables stricter quote/hash cross-check plus best-effort taker liquidity hint validation before inviting.
+- `intercomswap_tradeauto_start` / `intercomswap_tradeauto_status` / `intercomswap_tradeauto_stop`: backend multi-trade automation worker (quote/accept/invite/join/settlement orchestration).
+- `intercomswap_stack_start`: now auto-starts backend trade automation (rendezvous channels + settlement stages) and reports worker status/errors.
+- `intercomswap_stack_stop`: now also stops backend trade automation.
 - Autopost safety: jobs stop on insufficient-funds/liquidity errors (in addition to expiry/fill stops).
 
 When function signatures change:
@@ -774,6 +777,7 @@ Current Collin wallet/trading guardrails:
   - SOL tx-fee buffer required for claim/refund/transfer paths.
 - Channel Manager accepts peer URI input and also offers quick peer URI suggestions from `intercomswap_ln_listpeers`.
 - Autopost bots stop automatically on insufficient-funds/liquidity errors (and stop on expiry/fill as before).
+- Trade automation now runs server-side (backend worker via `intercomswap_tradeauto_*`), not in browser state. Collin no longer owns client-side settlement loops.
 
 Examples:
 ```bash

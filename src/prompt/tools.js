@@ -516,6 +516,46 @@ export const INTERCOMSWAP_TOOLS = [
     required: ['swap_invite_envelope'],
   }),
 
+  // Backend multi-trade automation worker (server-side; replaces client-side orchestration).
+  tool('intercomswap_tradeauto_status', 'Get backend trade-automation worker status and memory counters.', emptyParams),
+  tool('intercomswap_tradeauto_start', 'Start backend multi-trade automation worker for subscribed sidechannels.', {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      channels: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 64,
+        items: channelParam,
+        description: 'Rendezvous channels to monitor (defaults to 0000intercomswapbtcusdt when omitted).',
+      },
+      interval_ms: { type: 'integer', minimum: 250, maximum: 10000, description: 'Worker tick interval.' },
+      max_events: { type: 'integer', minimum: 200, maximum: 4000, description: 'In-memory SC event cap.' },
+      max_trades: { type: 'integer', minimum: 10, maximum: 500, description: 'Max active trades evaluated per tick.' },
+      event_max_age_ms: { type: 'integer', minimum: 30000, maximum: 3600000, description: 'Ignore stale events older than this.' },
+      default_sol_refund_window_sec: { type: 'integer', minimum: 3600, maximum: 604800, description: 'Default Solana refund window used by auto-quote/terms.' },
+      welcome_ttl_sec: { type: 'integer', minimum: 30, maximum: 604800, description: 'Invite TTL used for auto-invites.' },
+      ln_liquidity_mode: { type: 'string', enum: ['single_channel', 'aggregate'] },
+      usdt_mint: base58Param,
+      enable_quote_from_offers: { type: 'boolean' },
+      enable_accept_quotes: { type: 'boolean' },
+      enable_invite_from_accepts: { type: 'boolean' },
+      enable_join_invites: { type: 'boolean' },
+      enable_settlement: { type: 'boolean' },
+      sol_cu_limit: solCuLimitParam,
+      sol_cu_price: solCuPriceParam,
+    },
+    required: [],
+  }),
+  tool('intercomswap_tradeauto_stop', 'Stop backend multi-trade automation worker.', {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      reason: { type: 'string', minLength: 1, maxLength: 200 },
+    },
+    required: [],
+  }),
+
   // RFQ bot manager (local processes; does not stop the peer).
   tool('intercomswap_rfqbot_status', 'List local RFQ bot instances started via prompt tools (reads onchain/rfq-bots).', {
     type: 'object',
