@@ -9,6 +9,7 @@ export class ScBridgeClient extends EventEmitter {
     this.hello = null;
     this._pending = new Map();
     this._nextId = 1;
+    this.rpcTimeoutMs = 15_000;
   }
 
   _rejectAllPending(err) {
@@ -106,21 +107,51 @@ export class ScBridgeClient extends EventEmitter {
     this._resetConnection(new Error('SC-Bridge closed'));
   }
 
-  _rpc(type, payload) {
+  _rpc(type, payload, { timeoutMs = null } = {}) {
     if (!this.ws) throw new Error('Not connected');
     const id = this._nextId++;
     const msg = { id, type, ...payload };
+    const effectiveTimeout = Number.isFinite(timeoutMs) ? Math.max(250, Math.trunc(timeoutMs)) : this.rpcTimeoutMs;
     return new Promise((resolve, reject) => {
+      let timer = null;
+      if (effectiveTimeout > 0) {
+        timer = setTimeout(() => {
+          this._pending.delete(id);
+          const err = new Error(`SC-Bridge rpc timeout (${String(type || 'rpc')})`);
+          try {
+            this._resetConnection(err);
+            this.emit('close');
+          } catch (_e) {}
+          reject(err);
+        }, effectiveTimeout);
+      }
       this._pending.set(id, { resolve, reject });
       try {
         this.ws.send(JSON.stringify(msg));
       } catch (err) {
         // If the websocket died, fail fast. Otherwise callers can hang forever.
         this._pending.delete(id);
+        if (timer) clearTimeout(timer);
         this._resetConnection(err);
         reject(err);
       }
-      // Rely on caller timeouts for now.
+      if (timer) {
+        const pending = this._pending.get(id);
+        if (pending) {
+          this._pending.set(id, {
+            resolve: (value) => {
+              clearTimeout(timer);
+              resolve(value);
+            },
+            reject: (error) => {
+              clearTimeout(timer);
+              reject(error);
+            },
+          });
+        } else {
+          clearTimeout(timer);
+        }
+      }
     });
   }
 

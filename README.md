@@ -690,6 +690,7 @@ Recently added/changed tools and guardrails:
 - `intercomswap_quote_accept`: embeds a signed best-effort `ln_liquidity_hint` in the accept envelope.
 - `intercomswap_swap_invite_from_accept`: optional `quote_envelope` argument enables stricter quote/hash cross-check plus best-effort taker liquidity hint validation before inviting.
 - `intercomswap_tradeauto_start` / `intercomswap_tradeauto_status` / `intercomswap_tradeauto_stop`: backend multi-trade automation worker (quote/accept/invite/join/settlement orchestration).
+  - reliability knobs: `tool_timeout_ms` (per-tool timeout inside worker), `sc_ensure_interval_ms` (periodic SC subscribe/reconnect keepalive).
 - `intercomswap_stack_start`: now auto-starts backend trade automation (rendezvous channels + settlement stages) and reports worker status/errors.
 - `intercomswap_stack_stop`: now also stops backend trade automation.
 - Autopost safety: jobs stop on insufficient-funds/liquidity errors (in addition to expiry/fill stops).
@@ -778,6 +779,7 @@ Current Collin wallet/trading guardrails:
 - Channel Manager accepts peer URI input and also offers quick peer URI suggestions from `intercomswap_ln_listpeers`.
 - Autopost bots stop automatically on insufficient-funds/liquidity errors (and stop on expiry/fill as before).
 - Trade automation now runs server-side (backend worker via `intercomswap_tradeauto_*`), not in browser state. Collin no longer owns client-side settlement loops.
+- If backend trace shows `stopped`, start/stop it directly in Collin Overview (`Trade Automation Trace`) or call `intercomswap_tradeauto_start` / `intercomswap_tradeauto_stop`.
 
 Examples:
 ```bash

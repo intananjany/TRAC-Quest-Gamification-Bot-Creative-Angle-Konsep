@@ -718,37 +718,53 @@ function discoverLnWalletPasswordFile({ network, service, role }) {
   const svc = String(service || '').trim();
   const roleTag = String(role || '').trim().toLowerCase();
   const candidates = [];
-  const add = (name) => {
+  const dirs = [baseDir];
+  if (roleTag) dirs.push(path.join(baseDir, roleTag));
+  if (svc) dirs.push(path.join(baseDir, svc));
+  try {
+    for (const ent of fs.readdirSync(baseDir, { withFileTypes: true })) {
+      if (!ent.isDirectory()) continue;
+      dirs.push(path.join(baseDir, ent.name));
+    }
+  } catch (_e) {}
+  const uniqueDirs = Array.from(new Set(dirs));
+
+  const names = [];
+  const addName = (name) => {
     const n = String(name || '').trim();
     if (!n) return;
-    candidates.push(path.join(baseDir, n));
+    names.push(n);
   };
-
   if (roleTag) {
-    add(`${roleTag}.wallet-password.txt`);
-    add(`${roleTag}.wallet-password`);
-    add(`${roleTag}.wallet.pw`);
-    add(`${roleTag}.pw`);
-    add(`${roleTag}.password.txt`);
-    add(`${roleTag}.password`);
+    addName(`${roleTag}.wallet-password.txt`);
+    addName(`${roleTag}.wallet-password`);
+    addName(`${roleTag}.wallet.pw`);
+    addName(`${roleTag}.pw`);
+    addName(`${roleTag}.password.txt`);
+    addName(`${roleTag}.password`);
   }
-
   if (svc) {
-    add(`${svc}.wallet-password.txt`);
-    add(`${svc}.wallet-password`);
-    add(`${svc}.wallet.pw`);
-    add(`${svc}.pw`);
+    addName(`${svc}.wallet-password.txt`);
+    addName(`${svc}.wallet-password`);
+    addName(`${svc}.wallet.pw`);
+    addName(`${svc}.pw`);
+  }
+  addName('wallet-password.txt');
+  addName('wallet-password');
+  addName('wallet.password.txt');
+  addName('wallet.password');
+  addName('wallet.pw');
+  addName('wallet.pass');
+  addName('wallet.txt');
+
+  const uniqueNames = Array.from(new Set(names));
+  for (const dir of uniqueDirs) {
+    for (const name of uniqueNames) {
+      candidates.push(path.join(dir, name));
+    }
   }
 
-  add('wallet-password.txt');
-  add('wallet-password');
-  add('wallet.password.txt');
-  add('wallet.password');
-  add('wallet.pw');
-  add('wallet.pass');
-  add('wallet.txt');
-
-  for (const p of candidates) {
+  for (const p of Array.from(new Set(candidates))) {
     try {
       if (!fs.existsSync(p)) continue;
       const st = fs.statSync(p);
@@ -1297,6 +1313,8 @@ export class ToolExecutor {
         'max_events',
         'max_trades',
         'event_max_age_ms',
+        'tool_timeout_ms',
+        'sc_ensure_interval_ms',
         'default_sol_refund_window_sec',
         'welcome_ttl_sec',
         'ln_liquidity_mode',
@@ -1327,6 +1345,8 @@ export class ToolExecutor {
       const maxEvents = expectOptionalInt(args, toolName, 'max_events', { min: 200, max: 4_000 });
       const maxTrades = expectOptionalInt(args, toolName, 'max_trades', { min: 10, max: 500 });
       const eventMaxAgeMs = expectOptionalInt(args, toolName, 'event_max_age_ms', { min: 30_000, max: 60 * 60 * 1000 });
+      const toolTimeoutMs = expectOptionalInt(args, toolName, 'tool_timeout_ms', { min: 250, max: 120_000 });
+      const scEnsureIntervalMs = expectOptionalInt(args, toolName, 'sc_ensure_interval_ms', { min: 500, max: 60_000 });
       const defaultRefundSec = expectOptionalInt(args, toolName, 'default_sol_refund_window_sec', { min: 3600, max: 7 * 24 * 3600 });
       const welcomeTtlSec = expectOptionalInt(args, toolName, 'welcome_ttl_sec', { min: 30, max: 7 * 24 * 3600 });
       const lnLiquidityModeRaw = expectOptionalString(args, toolName, 'ln_liquidity_mode', { min: 1, max: 32 });
@@ -1350,6 +1370,8 @@ export class ToolExecutor {
         ...(maxEvents !== null ? { max_events: maxEvents } : {}),
         ...(maxTrades !== null ? { max_trades: maxTrades } : {}),
         ...(eventMaxAgeMs !== null ? { event_max_age_ms: eventMaxAgeMs } : {}),
+        ...(toolTimeoutMs !== null ? { tool_timeout_ms: toolTimeoutMs } : {}),
+        ...(scEnsureIntervalMs !== null ? { sc_ensure_interval_ms: scEnsureIntervalMs } : {}),
         ...(defaultRefundSec !== null ? { default_sol_refund_window_sec: defaultRefundSec } : {}),
         ...(welcomeTtlSec !== null ? { welcome_ttl_sec: welcomeTtlSec } : {}),
         ...(lnLiquidityMode ? { ln_liquidity_mode: lnLiquidityMode } : {}),
@@ -1957,12 +1979,14 @@ export class ToolExecutor {
         if (this._tradeAuto?.running) {
           await this._tradeAuto.stop({ reason: 'stack_start_reconfigure' });
         }
-        tradeAutoOut = await this._tradeAuto.start({
+        const tradeAutoOpts = {
           channels: autoChannels,
           interval_ms: 1000,
           max_events: 1800,
           max_trades: 160,
           event_max_age_ms: 10 * 60 * 1000,
+          tool_timeout_ms: 25_000,
+          sc_ensure_interval_ms: 5_000,
           default_sol_refund_window_sec: 72 * 3600,
           welcome_ttl_sec: 3600,
           ln_liquidity_mode: 'aggregate',
@@ -1974,7 +1998,20 @@ export class ToolExecutor {
           enable_settlement: true,
           sol_cu_limit: this.solana?.computeUnitLimit ?? null,
           sol_cu_price: this.solana?.computeUnitPriceMicroLamports ?? null,
-        });
+        };
+        let lastErr = null;
+        for (let attempt = 1; attempt <= 5; attempt += 1) {
+          try {
+            tradeAutoOut = await this._tradeAuto.start(tradeAutoOpts);
+            lastErr = null;
+            break;
+          } catch (err) {
+            lastErr = err;
+            if (attempt >= 5) break;
+            await new Promise((r) => setTimeout(r, 300 * attempt));
+          }
+        }
+        if (lastErr) throw lastErr;
       } catch (err) {
         tradeAutoOut = { type: 'tradeauto_start_error', error: err?.message ?? String(err) };
       }

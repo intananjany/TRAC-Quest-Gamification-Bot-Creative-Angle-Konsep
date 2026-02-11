@@ -174,6 +174,9 @@ export class TradeAutoManager {
     this._doneMaxAgeMs = 40 * 60 * 1000;
     this._debugMax = 500;
     this._debugEvents = [];
+    this._toolTimeoutMs = 25_000;
+    this._scEnsureIntervalMs = 5_000;
+    this._nextScEnsureAt = 0;
 
     this._autoQuotedRfqSig = new Set();
     this._autoAcceptedQuoteSig = new Set();
@@ -214,6 +217,21 @@ export class TradeAutoManager {
         this._debugEvents.splice(0, this._debugEvents.length - this._debugMax);
       }
     } catch (_e) {}
+  }
+
+  async _runToolWithTimeout({ tool, args }, { timeoutMs = null, label = '' } = {}) {
+    const ms = Number.isFinite(timeoutMs) ? Math.max(250, Math.trunc(timeoutMs)) : this._toolTimeoutMs;
+    let timer = null;
+    try {
+      return await Promise.race([
+        this.runTool({ tool, args }),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${label || tool}: timeout after ${ms}ms`)), ms);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   status() {
@@ -281,6 +299,16 @@ export class TradeAutoManager {
       max: 10_000,
       fallback: 600,
     });
+    const toolTimeoutMs = clampInt(toIntOrNull(opts.tool_timeout_ms), {
+      min: 250,
+      max: 120_000,
+      fallback: 25_000,
+    });
+    const scEnsureIntervalMs = clampInt(toIntOrNull(opts.sc_ensure_interval_ms), {
+      min: 500,
+      max: 60_000,
+      fallback: 5_000,
+    });
     const defaultSolRefundWindowSec = clampInt(toIntOrNull(opts.default_sol_refund_window_sec), {
       min: 3600,
       max: 7 * 24 * 3600,
@@ -304,6 +332,8 @@ export class TradeAutoManager {
       lock_max_age_ms: lockMaxAgeMs,
       done_max_age_ms: doneMaxAgeMs,
       debug_max_events: debugMax,
+      tool_timeout_ms: toolTimeoutMs,
+      sc_ensure_interval_ms: scEnsureIntervalMs,
       default_sol_refund_window_sec: defaultSolRefundWindowSec,
       welcome_ttl_sec: welcomeTtlSec,
       ln_liquidity_mode: lnLiquidityMode,
@@ -327,6 +357,9 @@ export class TradeAutoManager {
     this._doneMaxAgeMs = doneMaxAgeMs;
     this._debugMax = debugMax;
     this._debugEvents = [];
+    this._toolTimeoutMs = toolTimeoutMs;
+    this._scEnsureIntervalMs = scEnsureIntervalMs;
+    this._nextScEnsureAt = 0;
     this._autoQuotedRfqSig.clear();
     this._autoAcceptedQuoteSig.clear();
     this._autoAcceptedTradeLock.clear();
@@ -352,7 +385,11 @@ export class TradeAutoManager {
       ln_liquidity_mode: lnLiquidityMode,
     });
 
-    await this.runTool({ tool: 'intercomswap_sc_subscribe', args: { channels } });
+    await this._runToolWithTimeout(
+      { tool: 'intercomswap_sc_subscribe', args: { channels } },
+      { timeoutMs: Math.min(this._toolTimeoutMs, 10_000), label: 'tradeauto_start_subscribe' }
+    );
+    this._nextScEnsureAt = Date.now() + this._scEnsureIntervalMs;
 
     this.running = true;
     this._timer = setInterval(() => {
@@ -625,6 +662,18 @@ export class TradeAutoManager {
     this._tickInFlight = true;
     try {
       const logInfo = this.scLogInfo() || {};
+      if (Date.now() >= this._nextScEnsureAt) {
+        try {
+          await this._runToolWithTimeout(
+            { tool: 'intercomswap_sc_subscribe', args: { channels: this.opts.channels } },
+            { timeoutMs: Math.min(this._toolTimeoutMs, 10_000), label: 'tradeauto_sc_keepalive' }
+          );
+        } catch (err) {
+          this._trace('sc_keepalive_fail', { error: err?.message || String(err) });
+        } finally {
+          this._nextScEnsureAt = Date.now() + this._scEnsureIntervalMs;
+        }
+      }
       const latestSeq = Number.isFinite(logInfo.latest_seq) ? Math.max(0, Math.trunc(logInfo.latest_seq)) : 0;
       const sinceSeq = this._lastSeq > 0 ? this._lastSeq : Math.max(0, latestSeq - this.opts.max_events);
       const read = this.scLogRead({ sinceSeq, limit: this.opts.max_events }) || {};
@@ -634,8 +683,22 @@ export class TradeAutoManager {
       }
       this._lastSeq = Number.isFinite(read.latest_seq) ? Math.max(this._lastSeq, Math.trunc(read.latest_seq)) : this._lastSeq;
 
-      const localPeer = String((await this.runTool({ tool: 'intercomswap_sc_info', args: {} }))?.peer || '').trim().toLowerCase();
-      const localSolSigner = String((await this.runTool({ tool: 'intercomswap_sol_signer_pubkey', args: {} }))?.pubkey || '').trim();
+      const localPeer = String(
+        (await this._runToolWithTimeout(
+          { tool: 'intercomswap_sc_info', args: {} },
+          { timeoutMs: Math.min(this._toolTimeoutMs, 8_000), label: 'tradeauto_sc_info' }
+        ))?.peer || ''
+      )
+        .trim()
+        .toLowerCase();
+      const localSolSigner = String(
+        (
+          await this._runToolWithTimeout(
+            { tool: 'intercomswap_sol_signer_pubkey', args: {} },
+            { timeoutMs: Math.min(this._toolTimeoutMs, 8_000), label: 'tradeauto_sol_signer' }
+          )
+        )?.pubkey || ''
+      ).trim();
 
       const activeEvents = this._events.filter((e) => !isEventStale(e, this.opts.event_max_age_ms));
       const ctx = this._buildContexts({ events: activeEvents, localPeer });
@@ -662,7 +725,7 @@ export class TradeAutoManager {
           try {
             const ch = String(rfqEvt?.channel || '').trim();
             if (!ch) continue;
-            await this.runTool({
+            await this._runToolWithTimeout({
               tool: 'intercomswap_quote_post_from_rfq',
               args: {
                 channel: ch,
@@ -704,7 +767,7 @@ export class TradeAutoManager {
           if (ctx.terminalTradeIds.has(tradeId)) continue;
           if (this._autoAcceptedTradeLock.has(tradeId)) continue;
           try {
-            await this.runTool({
+            await this._runToolWithTimeout({
               tool: 'intercomswap_quote_accept',
               args: {
                 channel: String(quoteEvt?.channel || '').trim(),
@@ -749,7 +812,7 @@ export class TradeAutoManager {
           if (!myQuote) continue;
           try {
             const tradeId = envelopeTradeId(e);
-            const out = await this.runTool({
+            const out = await this._runToolWithTimeout({
               tool: 'intercomswap_swap_invite_from_accept',
               args: {
                 channel: String(e?.channel || myQuote.channel || '').trim(),
@@ -768,7 +831,12 @@ export class TradeAutoManager {
             this._clearEventRetry('invite_from_accept', sig);
             this._pruneCaches();
             const swapCh = String(out?.swap_channel || '').trim();
-            if (swapCh) await this.runTool({ tool: 'intercomswap_sc_subscribe', args: { channels: [swapCh] } });
+            if (swapCh) {
+              await this._runToolWithTimeout(
+                { tool: 'intercomswap_sc_subscribe', args: { channels: [swapCh] } },
+                { timeoutMs: Math.min(this._toolTimeoutMs, 10_000), label: 'tradeauto_swap_subscribe' }
+              );
+            }
             actionsLeft -= 1;
             this._stats.actions += 1;
           } catch (err) {
@@ -797,7 +865,7 @@ export class TradeAutoManager {
           const invitee = String(e?.message?.body?.invite?.payload?.inviteePubKey || '').trim().toLowerCase();
           if (invitee && localPeer && invitee !== localPeer) continue;
           try {
-            const out = await this.runTool({
+            const out = await this._runToolWithTimeout({
               tool: 'intercomswap_join_from_swap_invite',
               args: { swap_invite_envelope: e.message },
             });
@@ -810,7 +878,12 @@ export class TradeAutoManager {
             this._clearEventRetry('join_invite', sig);
             this._pruneCaches();
             const swapCh = String(out?.swap_channel || e?.message?.body?.swap_channel || '').trim();
-            if (swapCh) await this.runTool({ tool: 'intercomswap_sc_subscribe', args: { channels: [swapCh] } });
+            if (swapCh) {
+              await this._runToolWithTimeout(
+                { tool: 'intercomswap_sc_subscribe', args: { channels: [swapCh] } },
+                { timeoutMs: Math.min(this._toolTimeoutMs, 10_000), label: 'tradeauto_swap_subscribe' }
+              );
+            }
             actionsLeft -= 1;
             this._stats.actions += 1;
           } catch (err) {
@@ -897,7 +970,7 @@ export class TradeAutoManager {
                 });
                 const refundAfterUnix = Math.floor(Date.now() / 1000) + quoteRefundWindowSec;
                 const termsValidUntilUnix = toIntOrNull(quoteBody?.valid_until_unix);
-                await this.runTool({
+                await this._runToolWithTimeout({
                   tool: 'intercomswap_terms_post',
                   args: {
                     channel: swapChannel,
@@ -933,7 +1006,7 @@ export class TradeAutoManager {
               try {
                 if (!termsBoundToLocalIdentity) throw new Error('terms_accept: terms.ln_payer_peer mismatch');
                 if (!termsBoundToLocalSolRecipient) throw new Error('terms_accept: terms.sol_recipient mismatch');
-                await this.runTool({
+                await this._runToolWithTimeout({
                   tool: 'intercomswap_terms_accept_from_terms',
                   args: { channel: swapChannel, terms_envelope: termsEnv },
                 });
@@ -956,7 +1029,7 @@ export class TradeAutoManager {
               try {
                 const btcSats = toIntOrNull(termsBody?.btc_sats);
                 if (btcSats === null || btcSats < 1) throw new Error('ln_invoice: missing btc_sats');
-                await this.runTool({
+                await this._runToolWithTimeout({
                   tool: 'intercomswap_swap_ln_invoice_create_and_post',
                   args: {
                     channel: swapChannel,
@@ -999,7 +1072,7 @@ export class TradeAutoManager {
                 if (refundAfterUnix === null || refundAfterUnix < 1) throw new Error('sol_escrow: missing refund_after_unix');
                 if (!tradeFeeCollector) throw new Error('sol_escrow: missing trade_fee_collector');
 
-                await this.runTool({
+                await this._runToolWithTimeout({
                   tool: 'intercomswap_swap_sol_escrow_init_and_post',
                   args: {
                     channel: swapChannel,
@@ -1034,7 +1107,7 @@ export class TradeAutoManager {
               try {
                 if (!termsBoundToLocalIdentity) throw new Error('ln_pay: terms.ln_payer_peer mismatch');
                 if (!termsBoundToLocalSolRecipient) throw new Error('ln_pay: terms.sol_recipient mismatch');
-                const out = await this.runTool({
+                const out = await this._runToolWithTimeout({
                   tool: 'intercomswap_swap_ln_pay_and_post_verified',
                   args: {
                     channel: swapChannel,
@@ -1068,7 +1141,7 @@ export class TradeAutoManager {
                 if (!mint) throw new Error('sol_claim: missing mint');
                 let preimageHex = String(this._tradePreimage.get(tradeId) || '').trim().toLowerCase();
                 if (!/^[0-9a-f]{64}$/i.test(preimageHex)) {
-                  const rec = await this.runTool({
+                  const rec = await this._runToolWithTimeout({
                     tool: 'intercomswap_receipts_show',
                     args: { trade_id: tradeId },
                   });
@@ -1077,7 +1150,7 @@ export class TradeAutoManager {
                   this._pruneCaches();
                 }
                 if (!/^[0-9a-f]{64}$/i.test(preimageHex)) throw new Error('sol_claim: missing LN preimage');
-                await this.runTool({
+                await this._runToolWithTimeout({
                   tool: 'intercomswap_swap_sol_claim_and_post',
                   args: { channel: swapChannel, trade_id: tradeId, preimage_hex: preimageHex, mint },
                 });

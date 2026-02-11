@@ -533,6 +533,8 @@ export const INTERCOMSWAP_TOOLS = [
       max_events: { type: 'integer', minimum: 200, maximum: 4000, description: 'In-memory SC event cap.' },
       max_trades: { type: 'integer', minimum: 10, maximum: 500, description: 'Max active trades evaluated per tick.' },
       event_max_age_ms: { type: 'integer', minimum: 30000, maximum: 3600000, description: 'Ignore stale events older than this.' },
+      tool_timeout_ms: { type: 'integer', minimum: 250, maximum: 120000, description: 'Per-tool timeout inside trade automation worker.' },
+      sc_ensure_interval_ms: { type: 'integer', minimum: 500, maximum: 60000, description: 'How often the worker reasserts SC subscriptions/reconnect.' },
       default_sol_refund_window_sec: { type: 'integer', minimum: 3600, maximum: 604800, description: 'Default Solana refund window used by auto-quote/terms.' },
       welcome_ttl_sec: { type: 'integer', minimum: 30, maximum: 604800, description: 'Invite TTL used for auto-invites.' },
       ln_liquidity_mode: { type: 'string', enum: ['single_channel', 'aggregate'] },

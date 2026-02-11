@@ -261,6 +261,7 @@ Edit `onchain/prompt/setup.json`:
 - `llm.api_key`: optional (use `""` if not required)
 - `peer.keypair`: path to the peer wallet keypair file (usually `stores/<store>/db/keypair.json`) so tools can sign sidechannel envelopes locally
 - `sc_bridge.token` or `sc_bridge.token_file`: SC‑Bridge auth
+- `ln.wallet_password_file`: recommended explicit LND unlock password file path under `onchain/` (example: `onchain/lnd/mainnet/maker/wallet.pw`)
 - optional: `receipts.db`, `ln.*`, `solana.*` (only needed for tools that touch those subsystems)
 
 LN backend decision gate (mandatory in every setup.json):
@@ -277,6 +278,15 @@ LN backend decision gate (mandatory in every setup.json):
   - `spawn lightning-cli ENOENT` => config is CLN/CLI but CLN CLI is missing/not configured.
   - `spawn lncli ENOENT` => config is LND/CLI but LND CLI is missing/not configured.
   - If you prefer LND, set `ln.impl=lnd` explicitly; do not leave defaults.
+
+Wallet path policy (promptd tools):
+- LND unlock resolution is deterministic in this order:
+  1. tool arg: `password_file`
+  2. setup config: `ln.wallet_password_file`
+  3. fallback discovery under `onchain/lnd/<network>/` (including common names like `maker.wallet-password.txt`, `taker.wallet-password.txt`, `wallet.pw`, also inside direct subfolders such as `.../maker/wallet.pw`)
+- Recommendation: always set `ln.wallet_password_file` explicitly in each setup JSON (test/mainnet) to avoid cross-machine naming drift.
+- Solana signing has no fallback guessing: promptd uses `solana.keypair` only. If missing/wrong, tools fail fast.
+- Peer signing may be inferred from store (`stores/<store>/db/keypair.json`) during stack start, but production setups should still set `peer.keypair` explicitly.
 
 Run `promptd`:
 ```bash
@@ -389,6 +399,7 @@ Example promptd configs (all under `onchain/` so they are gitignored):
   - `ln.backend`: `cli` (recommended) or `docker`
   - `ln.network`: `mainnet` (LND) or `bitcoin` (CLN)
   - if `ln.impl=lnd` + `ln.backend=cli`: set `ln.lnd.rpcserver`, `ln.lnd.tlscert`, `ln.lnd.macaroon` (and optional `ln.lnd.dir`)
+  - if `ln.impl=lnd`: set `ln.wallet_password_file` explicitly (for unlock helper reliability)
   - if `ln.impl=cln` + `ln.backend=cli`: ensure `lightning-cli` is installed and reachable (`ln.cli_bin` if not in PATH)
   - `solana.rpc_url`: mainnet RPC(s)
 

@@ -1899,6 +1899,47 @@ function App() {
 	    }
 	  }
 
+  async function tradeAutoStartManual() {
+    if (runBusy || stackOpBusy) return;
+    setRunBusy(true);
+    setRunErr(null);
+    try {
+      const channels = scChannels
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 64);
+      await runToolFinal('intercomswap_tradeauto_start', {
+        channels: channels.length > 0 ? channels : ['0000intercomswapbtcusdt'],
+      }, { auto_approve: true });
+      pushToast('success', 'Trade automation worker started');
+      await refreshPreflight();
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      setRunErr(msg);
+      pushToast('error', `Trade worker start failed: ${msg}`);
+    } finally {
+      setRunBusy(false);
+    }
+  }
+
+  async function tradeAutoStopManual() {
+    if (runBusy || stackOpBusy) return;
+    setRunBusy(true);
+    setRunErr(null);
+    try {
+      await runToolFinal('intercomswap_tradeauto_stop', { reason: 'manual_stop' }, { auto_approve: true });
+      pushToast('success', 'Trade automation worker stopped');
+      await refreshPreflight();
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      setRunErr(msg);
+      pushToast('error', `Trade worker stop failed: ${msg}`);
+    } finally {
+      setRunBusy(false);
+    }
+  }
+
   function stackBlockedToast(actionLabel: string) {
     const missing = stackGate.reasons.length > 0 ? stackGate.reasons.map((r) => `- ${r}`).join('\n') : '- unknown';
     pushToast('error', `${actionLabel}: stack not ready\n\nMissing:\n${missing}`);
@@ -4254,6 +4295,15 @@ function App() {
                 <span className={`chip ${tradeAutoStatus?.running ? 'hi' : 'warn'}`}>
                   {tradeAutoStatus?.running ? 'running' : 'stopped'}
                 </span>
+                {tradeAutoStatus?.running ? (
+                  <button className="btn ghost" onClick={() => void tradeAutoStopManual()} disabled={runBusy || stackOpBusy}>
+                    Stop worker
+                  </button>
+                ) : (
+                  <button className="btn primary" onClick={() => void tradeAutoStartManual()} disabled={runBusy || stackOpBusy}>
+                    Start worker
+                  </button>
+                )}
                 {tradeAutoStatus?.stats?.actions !== undefined ? (
                   <span className="chip">actions: {Number(tradeAutoStatus.stats.actions || 0)}</span>
                 ) : null}
