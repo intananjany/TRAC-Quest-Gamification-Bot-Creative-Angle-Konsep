@@ -61,14 +61,34 @@ interface CollinDb extends DBSchema {
   };
 }
 
-const DB_NAME = 'collin';
+let _dbName = 'collin';
 const DB_VERSION = 2;
 
 let _dbPromise: Promise<IDBPDatabase<CollinDb>> | null = null;
 
+export function setDbNamespace(ns: string) {
+  const raw = String(ns || '').trim().toLowerCase();
+  // Keep the name short and filesystem-like to avoid browser edge cases.
+  const safe = raw.replaceAll(/[^a-z0-9._-]/g, '_').slice(0, 32);
+  const next = safe ? `collin-${safe}` : 'collin';
+  if (next === _dbName) return;
+  _dbName = next;
+  // Best-effort close the previous DB handle (if any) and reopen on demand.
+  if (_dbPromise) {
+    _dbPromise
+      .then((d) => {
+        try {
+          d.close();
+        } catch (_e) {}
+      })
+      .catch(() => {});
+  }
+  _dbPromise = null;
+}
+
 function db() {
   if (_dbPromise) return _dbPromise;
-  _dbPromise = openDB<CollinDb>(DB_NAME, DB_VERSION, {
+  _dbPromise = openDB<CollinDb>(_dbName, DB_VERSION, {
     upgrade(db) {
       if (!db.objectStoreNames.contains('sc_events')) {
         const s = db.createObjectStore('sc_events', { keyPath: 'id', autoIncrement: true });

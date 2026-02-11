@@ -1128,6 +1128,21 @@ export class ToolExecutor {
         if (a.includes(b)) return a;
         return `${a}; ${b}`;
       };
+
+      // For docker-based Lightning backends, ensure containers are up on START (not just regtest).
+      // On regtest we do a full init+fund+channel open via ln_regtest_init below.
+      try {
+        const net = String(this.ln?.network || '').trim().toLowerCase();
+        const isDocker = String(this.ln?.backend || '').trim() === 'docker';
+        if (lnBootstrap && isDocker && net && net !== 'regtest' && net !== 'reg') {
+          try {
+            await this.execute('intercomswap_ln_docker_up', {}, { autoApprove: true, dryRun: false, secrets });
+          } catch (err) {
+            lnErr = appendErr(lnErr, `ln_docker_up: ${err?.message ?? String(err)}`);
+          }
+        }
+      } catch (_e) {}
+
       const tryLnRegtestInit = async ({ originalError = null } = {}) => {
         try {
           lnOut = await this.execute('intercomswap_ln_regtest_init', {}, { autoApprove: true, dryRun: false, secrets });
@@ -2603,7 +2618,11 @@ export class ToolExecutor {
       } else {
         const cfgSvc = String(this.ln?.service || '').trim();
         if (cfgSvc) {
-          services.push('bitcoind', normalizeDockerServiceName(cfgSvc, 'ln.service'));
+          const net = String(this.ln?.network || '').trim().toLowerCase();
+          // Only regtest docker stacks need bitcoind. Mainnet/testnet/signet can be neutrino-only (LND)
+          // or externally backed, and many compose files won't define a bitcoind service.
+          if ((net === 'regtest' || net === 'reg') && cfgSvc !== 'bitcoind') services.push('bitcoind');
+          services.push(normalizeDockerServiceName(cfgSvc, 'ln.service'));
         }
       }
 

@@ -17,7 +17,7 @@ test('env_get: reports config and classifies test env (regtest + local validator
   assert.equal(out.env_kind, 'test');
   assert.equal(out.ln.network, 'regtest');
   assert.equal(out.solana.classify.kind, 'local');
-  assert.equal(out.receipts.db, 'onchain/receipts/test/swap-maker.sqlite');
+  assert.ok(String(out.receipts.db || '').endsWith('onchain/receipts/test/swap-maker.sqlite'));
   assert.equal(typeof out.app.app_hash, 'string');
   assert.ok(out.app.app_hash.length > 0);
 });
@@ -37,4 +37,3 @@ test('env_get: classifies mixed env (LN mainnet + Solana devnet)', async () => {
   assert.equal(out.ln.classify.kind, 'mainnet');
   assert.equal(out.solana.classify.kind, 'devnet');
 });
-

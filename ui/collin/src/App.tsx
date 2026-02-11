@@ -12,9 +12,12 @@ import {
   scAdd,
   scListBefore,
   scListLatest,
+  setDbNamespace,
 } from './lib/db';
 
 type OracleSummary = { ok: boolean; ts: number | null; btc_usd: number | null; usdt_usd: number | null; btc_usdt: number | null };
+
+const MAINNET_USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
 
 function App() {
   const [activeTab, setActiveTab] = useState<
@@ -168,6 +171,7 @@ function App() {
       return '';
     }
   });
+  const walletUsdtMintEnvRef = useRef<string>('');
   const [walletUsdtAta, setWalletUsdtAta] = useState<string | null>(null);
   const [walletUsdtAtomic, setWalletUsdtAtomic] = useState<string | null>(null);
   const [walletUsdtErr, setWalletUsdtErr] = useState<string | null>(null);
@@ -214,9 +218,29 @@ function App() {
 
   useEffect(() => {
     try {
-      if (walletUsdtMint.trim()) window.localStorage.setItem('collin_wallet_usdt_mint', walletUsdtMint.trim());
+      const mint = walletUsdtMint.trim();
+      if (!mint) return;
+      window.localStorage.setItem('collin_wallet_usdt_mint', mint);
+      const kind = String(envInfo?.env_kind || '').trim().toLowerCase();
+      if (kind) window.localStorage.setItem(`collin_wallet_usdt_mint:${kind}`, mint);
     } catch (_e) {}
-  }, [walletUsdtMint]);
+  }, [walletUsdtMint, envInfo?.env_kind]);
+
+  useEffect(() => {
+    // Keep the configured USDT mint scoped per env_kind (test vs mainnet).
+    const kind = String(envInfo?.env_kind || '').trim().toLowerCase();
+    if (!kind) return;
+    if (walletUsdtMintEnvRef.current === kind) return;
+    walletUsdtMintEnvRef.current = kind;
+    try {
+      const saved = String(window.localStorage.getItem(`collin_wallet_usdt_mint:${kind}`) || '').trim();
+      if (saved) {
+        setWalletUsdtMint(saved);
+        return;
+      }
+    } catch (_e) {}
+    if (kind === 'mainnet') setWalletUsdtMint(MAINNET_USDT_MINT);
+  }, [envInfo?.env_kind]);
 
   useEffect(() => {
     try {
@@ -2719,8 +2743,19 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedReceiptsSource?.key]);
 
-  // Load recent history from local IndexedDB (memory-safe; DOM is virtualized).
+  // Load recent history from local IndexedDB.
+  // IMPORTANT: keep test vs mainnet separate by using a namespaced DB per env_kind.
   useEffect(() => {
+    const kindRaw = String(envInfo?.env_kind || '').trim().toLowerCase();
+    if (!kindRaw) return;
+    const kind = kindRaw === 'test' || kindRaw === 'mainnet' || kindRaw === 'mixed' ? kindRaw : 'default';
+    setDbNamespace(kind);
+
+    // Reset in-memory logs when switching env kinds so operators don't get "mixed" UI.
+    setScEvents([]);
+    setPromptEvents([]);
+    setPromptChat([]);
+
     (async () => {
       try {
         const sc = await scListLatest({ limit: 400 });
@@ -2746,7 +2781,7 @@ function App() {
         requestAnimationFrame(scrollChatToBottom);
       } catch (_e) {}
     })();
-  }, []);
+  }, [envInfo?.env_kind]);
 
   // No “follow tail” UI: logs render newest-first.
 
