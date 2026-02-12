@@ -631,9 +631,10 @@ function App() {
   });
   const [lnAutoPeerFailover, setLnAutoPeerFailover] = useState<boolean>(() => {
     try {
-      return String(window.localStorage.getItem('collin_ln_auto_peer_failover') || '1') !== '0';
+      // Default off: do not silently change operator-selected peers.
+      return String(window.localStorage.getItem('collin_ln_auto_peer_failover') || '0') === '1';
     } catch (_e) {
-      return true;
+      return false;
     }
   });
   const [lnChannelAmountSats, setLnChannelAmountSats] = useState<number>(1_000_000);
@@ -4604,18 +4605,39 @@ function App() {
     [preflight?.ln_listpeers]
   );
   const lnConnectedPeerSuggestions = useMemo(() => lnPeerSuggestions.filter((p) => p.connected), [lnPeerSuggestions]);
-  const lnConnectedPeerCount = lnConnectedPeerSuggestions.length;
-  const lnSelectedPeerNodeId = useMemo(() => parseNodeIdFromPeerUri(lnPeerInput), [lnPeerInput]);
-  const lnSelectedPeerConnected = useMemo(() => {
-    if (!lnSelectedPeerNodeId) return false;
-    return lnConnectedPeerSuggestions.some((p) => p.id === lnSelectedPeerNodeId);
-  }, [lnConnectedPeerSuggestions, lnSelectedPeerNodeId]);
-  const lnSelectedPeerKnown = useMemo(() => {
-    if (!lnSelectedPeerNodeId) return false;
-    return lnPeerSuggestions.some((p) => p.id === lnSelectedPeerNodeId);
-  }, [lnPeerSuggestions, lnSelectedPeerNodeId]);
   const lnPeerFailoverKeyRef = useRef<string>('');
   const lnPeerFailoverSeenRef = useRef<{ nodeId: string; wasConnected: boolean } | null>(null);
+  const lnDefaultPeerAutoConnectRef = useRef<string>('');
+
+  // Mainnet UX: automatically connect to the default peer (ACINQ) so operators don't end up with
+  // an isolated topology that causes NO_ROUTE. This only runs when:
+  // - env_kind=mainnet
+  // - stack is running + LN wallet is unlocked
+  // - peer URI is still the default (no override in Advanced)
+  // - we're not already connected to ACINQ
+  useEffect(() => {
+    const kind = String(envInfo?.env_kind || '').trim().toLowerCase();
+    if (kind !== 'mainnet') return;
+    if (!stackAnyRunning) return;
+    if (lnWalletLocked) return;
+    const peer = lnPeerInput.trim();
+    if (!peer || peer !== ACINQ_PEER_URI) return;
+    if (lnConnectedPeerSuggestions.some((p) => p.id === ACINQ_NODE_ID)) return;
+    if (runBusy) return;
+
+    const key = `${kind}:${ACINQ_PEER_URI}:${stackAnyRunning ? '1' : '0'}`;
+    if (lnDefaultPeerAutoConnectRef.current === key) return;
+    lnDefaultPeerAutoConnectRef.current = key;
+
+    (async () => {
+      try {
+        await runToolFinal('intercomswap_ln_connect', { peer: ACINQ_PEER_URI }, { auto_approve: true });
+        void refreshPreflight();
+      } catch (_e) {
+        // Keep this quiet; if ACINQ can't be reached the operator can switch peers in Advanced.
+      }
+    })();
+  }, [envInfo?.env_kind, stackAnyRunning, lnWalletLocked, lnPeerInput, lnConnectedPeerSuggestions, runBusy]);
 
   useEffect(() => {
     const peers = lnConnectedPeerSuggestions;
@@ -6855,42 +6877,45 @@ function App() {
                         {lnPeerAdvancedOpen ? 'Hide Advanced' : 'Advanced'}
                       </button>
                     </div>
-                    <div className="muted small">
-                      {String(envInfo?.env_kind || '').trim().toLowerCase() === 'mainnet'
-                        ? `Default: ACINQ (${ACINQ_NODE_ID.slice(0, 12)}…@${ACINQ_PEER_ADDR}). Using other peers is discouraged for now (can cause NO_ROUTE due to isolated topology).`
-                        : 'Select a peer URI (nodeid@host:port) to open a channel.'}
-                    </div>
-                    <div className="row" style={{ marginTop: 6, flexWrap: 'wrap' }}>
-                      {String(envInfo?.env_kind || '').trim().toLowerCase() === 'mainnet' ? (
-                        <button
-                          className="btn small"
-                          onClick={() => setLnPeerInput(ACINQ_PEER_URI)}
-                          title={ACINQ_PEER_URI}
-                          disabled={runBusy}
-                        >
-                          use ACINQ
-                        </button>
-                      ) : null}
-                      <span className={`chip ${lnSelectedPeerConnected ? 'hi' : lnSelectedPeerKnown ? 'warn' : 'dim'}`}>
-                        {lnSelectedPeerConnected
-                          ? 'selected peer: connected'
-                          : lnSelectedPeerKnown
-                            ? 'selected peer: offline'
-                            : lnSelectedPeerNodeId
-                              ? 'selected peer: unknown'
-                              : 'selected peer: missing'}
-                      </span>
-                      <span className={`chip ${lnConnectedPeerCount > 0 ? 'hi' : 'warn'}`}>
-                        connected peers: {lnConnectedPeerCount}
-                      </span>
-                    </div>
 
                     {!lnPeerAdvancedOpen ? (
                       <div className="row" style={{ marginTop: 6, flexWrap: 'wrap' }}>
-                        <span className={`mono small ${lnPeerInput.trim() ? '' : 'muted'}`}>{lnPeerInput.trim() || '(missing peer URI)'}</span>
+                        <span className={`mono small ${lnPeerInput.trim() ? '' : 'muted'}`}>
+                          {String(envInfo?.env_kind || '').trim().toLowerCase() === 'mainnet' ? 'ACINQ' : lnPeerInput.trim() || '(missing peer URI)'}
+                        </span>
                       </div>
                     ) : (
                       <>
+                        {String(envInfo?.env_kind || '').trim().toLowerCase() === 'mainnet' ? (
+                          <div className="row" style={{ marginTop: 6, flexWrap: 'wrap' }}>
+                            <button
+                              className="btn small"
+                              disabled={runBusy || lnWalletLocked}
+                              title={ACINQ_PEER_URI}
+                              onClick={async () => {
+                                setLnPeerInput(ACINQ_PEER_URI);
+                                if (lnWalletLocked) {
+                                  pushToast('error', 'Lightning wallet locked. Unlock it first, then refresh BTC status.');
+                                  return;
+                                }
+                                try {
+                                  await runToolFinal('intercomswap_ln_connect', { peer: ACINQ_PEER_URI }, { auto_approve: true });
+                                  void refreshPreflight();
+                                } catch (e: any) {
+                                  const msg = String(e?.message || e || '').trim();
+                                  // "already connected" is not an error for UX.
+                                  const lower = msg.toLowerCase();
+                                  const already =
+                                    lower.includes('already connected') ||
+                                    lower.includes('already connected to peer');
+                                  if (!already) pushToast('error', msg || 'LN connect failed');
+                                }
+                              }}
+                            >
+                              Use + Connect ACINQ
+                            </button>
+                          </div>
+                        ) : null}
                         <input
                           className="input mono"
                           value={lnPeerInput}
