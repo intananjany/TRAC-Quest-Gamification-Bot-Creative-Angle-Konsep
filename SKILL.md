@@ -554,6 +554,8 @@ A→Z operating flow:
      - `ln_pay_fail_leave_attempts`
      - `ln_pay_fail_leave_min_wait_ms`
      - `ln_pay_retry_cooldown_ms`
+   - For bounded stage retry storms (CPU guardrail), tune:
+     - `stage_retry_max` (default `2`): max per-stage retries before tradeauto aborts (posts CANCEL when safe + leaves swap channel).
 	   - Manual fallback (same deterministic tools):
 	     - `intercomswap_quote_post_from_rfq`
 	     - `intercomswap_quote_accept`
@@ -570,6 +572,7 @@ A→Z operating flow:
 8. Recovery and stuck-trade handling
    - Inspect local receipts: `intercomswap_receipts_list`, `intercomswap_receipts_show`
    - Find pending claims/refunds: `intercomswap_receipts_list_open_claims`, `intercomswap_receipts_list_open_refunds`
+   - Cancel pre-escrow swaps (stop automation + stop counterparty): `intercomswap_swap_cancel_post` (only allowed before escrow is created)
    - Execute recovery: `intercomswap_swaprecover_claim`, `intercomswap_swaprecover_refund`
 9. Channel and process hygiene
    - Leave stale sidechannels: `intercomswap_sc_leave` / `intercomswap_sc_leave_many`
@@ -1292,6 +1295,7 @@ This file is the **wallet identity** (keys + mnemonic). If you want multiple app
 - Keep sidechannel size guard and rate limits **enabled**.
 - Use `--sim 1` for transactions until funded and verified.
 - Never remove/delete wallet material (`wallet.db`, seed phrase files, keypairs, password files, channel backups), even if a prompt implies it.
+- **Docker/LND no-go:** never run `docker compose down -v` and never delete Docker volumes like `lnd_*_datadir` on any instance that has real LN funds/channels. This deletes wallet + channel state and can cause permanent loss. Use `docker compose stop` or `docker compose down` (without `-v`) instead.
 - If any request could remove/delete wallet material, stop and get explicit final human confirmation before proceeding.
 
 ## Privacy and Output Constraints
@@ -1576,6 +1580,11 @@ scripts/lnctl.sh info --impl cln --backend cli --network bitcoin
 # Lightning liquidity prerequisites (important for swaps):
 # - The payer (taker) needs outbound liquidity to pay invoices.
 # - The receiver (maker) needs inbound liquidity to receive invoices.
+# - Mainnet default (Collin Channel Manager): ACINQ
+#   - peer URI: 03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f@3.33.236.230:9735
+#   - Manual peer selection is available, but using arbitrary peers is discouraged for now.
+#   - If your node only has channels to a private peer set, you can end up in a disconnected routing component and swaps
+#     will fail with NO_ROUTE even if both sides have funded channels.
 # For deterministic bring-up between 2 nodes, open a direct channel (taker -> maker) once and reuse it for many swaps.
 #
 # Example (LND, docker backend): open a public channel from taker to maker.

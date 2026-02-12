@@ -707,9 +707,12 @@ Recently added/changed tools and guardrails:
     - `ln_pay_fail_leave_attempts`: minimum repeated `ln_pay` failures before fail-leave can trigger.
     - `ln_pay_fail_leave_min_wait_ms`: minimum elapsed time since first `ln_pay` failure before fail-leave can trigger.
     - `ln_pay_retry_cooldown_ms`: retry cadence before fail-leave thresholds are reached.
+  - bounded stage retries:
+    - `stage_retry_max` (default `2`): max retries per settlement stage before tradeauto aborts (posts CANCEL when safe + leaves swap channel).
   - ownership detection: worker resolves local peer identity from SC info shapes returned by runtime (`peer` and `info.peerPubkey` variants) to avoid false `not_owner` settlement skips.
 - `intercomswap_tradeauto_trace_set`: enable/disable backend trace emission at runtime without restarting the full stack.
 - `intercomswap_swap_status_post`: signed status/liveness envelope helper for swap channels.
+- `intercomswap_swap_cancel_post`: signed cancel helper (allowed only before escrow is created; used by tradeauto to stop retry storms).
 - `intercomswap_stack_start`: auto-starts backend trade automation (safe defaults; only quotes RFQs that match local offers) and reports worker status/errors.
 - `intercomswap_stack_stop`: now also stops backend trade automation.
 - Swap maker invoice path (`intercomswap_swap_ln_invoice_create_and_post`) now uses normal invoice routing behavior (no forced private-route-hint mode).
@@ -801,7 +804,9 @@ Current Collin wallet/trading guardrails:
   - LN route buffer included for BTC send checks.
   - USDT requirement includes fee-cap headroom.
   - SOL tx-fee buffer required for claim/refund/transfer paths.
-- Channel Manager accepts peer URI input and also offers quick peer URI suggestions from `intercomswap_ln_listpeers`.
+- Channel Manager defaults to **ACINQ** on mainnet (reduces isolated topology `NO_ROUTE` incidents).
+  - Manual peer URI selection is available under an **Advanced** expander.
+  - Quick peer URI suggestions come from `intercomswap_ln_listpeers`.
 - Autopost bots stop automatically on insufficient-funds/liquidity errors (and stop on expiry/fill as before).
 - Trade automation now runs server-side (backend worker via `intercomswap_tradeauto_*`), not in browser state. Collin no longer owns client-side settlement loops.
 - Collin sidechannel stream processing deduplicates repeated SC events (including reconnect backlog duplicates) before inserting into the local event store to keep browser CPU/load bounded.
