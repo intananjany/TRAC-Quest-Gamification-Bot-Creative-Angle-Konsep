@@ -326,6 +326,8 @@ test('tradeauto: offer-sourced quote path remains active (service announce -> qu
     });
     assert.equal(posted.length, 1);
     assert.equal(String(posted[0]?.args?.channel || ''), '0000intercomswapbtcusdt');
+    assert.equal(Number(posted[0]?.args?.offer_line_index), 0);
+    assert.equal(String(posted[0]?.args?.offer_envelope?.kind || ''), 'swap.svc_announce');
   } finally {
     await mgr.stop({ reason: 'test_done' });
   }

@@ -27,6 +27,9 @@ import {
   withdrawFeesTx,
 } from '../src/solana/lnUsdtEscrowClient.js';
 
+const FIXED_PLATFORM_FEE_BPS = 10; // 0.1%
+const DEFAULT_TRADE_FEE_BPS = 10; // 0.1%
+
 function die(msg) {
   process.stderr.write(`${msg}\n`);
   process.exit(1);
@@ -48,19 +51,20 @@ Key flags (for signing commands):
 
 Commands:
   config-get
-  config-init --fee-bps <n> [--fee-collector <pubkey>] [--simulate 0|1]
-  config-set  --fee-bps <n> [--fee-collector <pubkey>] [--simulate 0|1]
+  config-init [--fee-bps 10] [--fee-collector <pubkey>] [--simulate 0|1]
+  config-set  [--fee-bps 10] [--fee-collector <pubkey>] [--simulate 0|1]
   fees-balance --mint <pubkey>
   fees-withdraw --mint <pubkey> [--amount <u64>] [--create-ata 0|1] [--simulate 0|1]
   trade-config-get --fee-collector <pubkey>
-  trade-config-init --fee-bps <n> [--fee-collector <pubkey>] [--simulate 0|1]
-  trade-config-set  --fee-bps <n> [--fee-collector <pubkey>] [--simulate 0|1]
+  trade-config-init [--fee-bps <n>] [--fee-collector <pubkey>] [--simulate 0|1]
+  trade-config-set  [--fee-bps <n>] [--fee-collector <pubkey>] [--simulate 0|1]
   trade-fees-balance --fee-collector <pubkey> --mint <pubkey>
   trade-fees-withdraw --mint <pubkey> [--amount <u64>] [--create-ata 0|1] [--simulate 0|1]
   escrow-get --payment-hash <hex32>
 
 Notes:
   - In this fork, the program enforces: config authority == fee_collector.
+  - Platform fee is fixed at 10 bps (0.1%) in this operator tool.
   - For WithdrawFees, --amount 0 (default) means "withdraw all".
 `.trim();
 }
@@ -295,7 +299,11 @@ async function main() {
   const signer = readSolanaKeypair(keypairPath);
 
   if (cmd === 'config-init' || cmd === 'config-set') {
-    const feeBps = parseIntFlag(requireFlag(flags, 'fee-bps'), 'fee-bps');
+    const feeBpsRequested = parseIntFlag(flags.get('fee-bps'), 'fee-bps', FIXED_PLATFORM_FEE_BPS);
+    if (feeBpsRequested !== FIXED_PLATFORM_FEE_BPS) {
+      die(`Invalid --fee-bps: platform fee is fixed at ${FIXED_PLATFORM_FEE_BPS} bps (0.1%).`);
+    }
+    const feeBps = FIXED_PLATFORM_FEE_BPS;
     const feeCollectorStr = (flags.get('fee-collector') && String(flags.get('fee-collector')).trim()) || '';
     const feeCollector = feeCollectorStr ? new PublicKey(feeCollectorStr) : signer.publicKey;
     const simulate = parseBool(flags.get('simulate'), false);
@@ -358,7 +366,7 @@ async function main() {
   }
 
   if (cmd === 'trade-config-init' || cmd === 'trade-config-set') {
-    const feeBps = parseIntFlag(requireFlag(flags, 'fee-bps'), 'fee-bps');
+    const feeBps = parseIntFlag(flags.get('fee-bps'), 'fee-bps', DEFAULT_TRADE_FEE_BPS);
     const feeCollectorStr = (flags.get('fee-collector') && String(flags.get('fee-collector')).trim()) || '';
     const feeCollector = feeCollectorStr ? new PublicKey(feeCollectorStr) : signer.publicKey;
     const simulate = parseBool(flags.get('simulate'), false);

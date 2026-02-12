@@ -447,6 +447,18 @@ export const INTERCOMSWAP_TOOLS = [
             { type: 'string', pattern: '^secret:[0-9a-fA-F-]{10,}$', description: 'Secret handle to an RFQ envelope.' },
           ],
         },
+        offer_envelope: {
+          anyOf: [
+            { type: 'object', description: 'Optional signed Offer (swap.svc_announce) envelope used for deterministic offer-line locking.' },
+            { type: 'string', pattern: '^secret:[0-9a-fA-F-]{10,}$', description: 'Optional secret handle to an Offer envelope.' },
+          ],
+        },
+        offer_line_index: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 1000000,
+          description: 'Optional offer line index (requires offer_envelope). Used to lock exactly one offer line.',
+        },
         trade_fee_collector: { ...base58Param, description: 'Fee receiver pubkey. trade_fee_bps is read from the trade-config PDA for this address.' },
         sol_refund_window_sec: { type: 'integer', minimum: 3600, maximum: 7 * 24 * 3600, description: 'Solana refund/claim window (seconds) that will be used in binding TERMS.' },
         valid_until_unix: unixSecParam,
@@ -1405,16 +1417,15 @@ export const INTERCOMSWAP_TOOLS = [
     required: ['payment_hash_hex', 'mint'],
   }),
   tool('intercomswap_sol_config_get', 'Get program fee config (platform config PDA).', emptyParams),
-  tool('intercomswap_sol_config_set', 'Set program fee config (admin authority required).', {
+  tool('intercomswap_sol_config_set', 'Set program fee config (admin authority required; platform fee is fixed at 10 bps).', {
     type: 'object',
     additionalProperties: false,
     properties: {
-      fee_bps: { type: 'integer', minimum: 0, maximum: 500 },
       fee_collector: base58Param,
       cu_limit: solCuLimitParam,
       cu_price: solCuPriceParam,
     },
-    required: ['fee_bps', 'fee_collector'],
+    required: ['fee_collector'],
   }),
   tool('intercomswap_sol_fees_withdraw', 'Withdraw accrued platform fees from fee vault (admin authority required).', {
     type: 'object',
@@ -1443,7 +1454,7 @@ export const INTERCOMSWAP_TOOLS = [
   ),
   tool(
     'intercomswap_sol_trade_config_set',
-    'Init/set trade fee config (fee_collector authority required).',
+    'Init/set trade fee config (fee_collector authority required; defaults to 10 bps when omitted).',
     {
       type: 'object',
       additionalProperties: false,
@@ -1453,7 +1464,7 @@ export const INTERCOMSWAP_TOOLS = [
         cu_limit: solCuLimitParam,
         cu_price: solCuPriceParam,
       },
-      required: ['fee_bps', 'fee_collector'],
+      required: ['fee_collector'],
     }
   ),
   tool(

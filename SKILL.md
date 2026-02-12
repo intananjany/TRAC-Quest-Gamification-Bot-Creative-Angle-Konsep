@@ -1332,7 +1332,7 @@ The Solana escrow program charges fees **on top** (paid by the depositor):
 There are 2 independent fee configs:
 1) Platform fee (program-wide):
 - `config` PDA (seed `b"config"`)
-- fields: `fee_collector`, `fee_bps` (capped at **500 bps (5%)**)
+- fields: `fee_collector`, `fee_bps` (in this stack/tooling: fixed at **10 bps (0.1%)**)
 - fees accrue into a **platform fee-vault ATA** owned by the `config` PDA (per mint)
 2) Trade fee (per fee receiver):
 - `trade_config` PDA (seed `b"trade_config"`, keyed by `fee_collector`)
@@ -1351,16 +1351,16 @@ Operational notes:
 Operator tooling (`scripts/escrowctl.*`):
 - Inspect platform config:
   - `scripts/escrowctl.sh config-get --solana-rpc-url <rpc>`
-- Initialize or update platform fee (default recommendation: **0.5% = 50 bps**):
-  - `scripts/escrowctl.sh config-init --solana-rpc-url <rpc> --solana-keypair onchain/.../platform-fee-collector.json --fee-bps 50`
-  - `scripts/escrowctl.sh config-set  --solana-rpc-url <rpc> --solana-keypair onchain/.../platform-fee-collector.json --fee-bps 50`
+- Initialize or update platform fee collector (platform fee fixed at **0.1% = 10 bps**):
+  - `scripts/escrowctl.sh config-init --solana-rpc-url <rpc> --solana-keypair onchain/.../platform-fee-collector.json`
+  - `scripts/escrowctl.sh config-set  --solana-rpc-url <rpc> --solana-keypair onchain/.../platform-fee-collector.json`
   - Add `--simulate 1` to dry-run on the RPC without broadcasting.
   - Optional: add `--solana-cu-limit <units>` and/or `--solana-cu-price <microLamports>` to tune priority fees.
 - Inspect trade config:
   - `scripts/escrowctl.sh trade-config-get --solana-rpc-url <rpc> --fee-collector <pubkey>`
-- Initialize or update trade fee (default recommendation: **0.5% = 50 bps**):
-  - `scripts/escrowctl.sh trade-config-init --solana-rpc-url <rpc> --solana-keypair onchain/.../trade-fee-collector.json --fee-bps 50`
-  - `scripts/escrowctl.sh trade-config-set  --solana-rpc-url <rpc> --solana-keypair onchain/.../trade-fee-collector.json --fee-bps 50`
+- Initialize or update trade fee (default recommendation: **0.1% = 10 bps**):
+  - `scripts/escrowctl.sh trade-config-init --solana-rpc-url <rpc> --solana-keypair onchain/.../trade-fee-collector.json --fee-bps 10`
+  - `scripts/escrowctl.sh trade-config-set  --solana-rpc-url <rpc> --solana-keypair onchain/.../trade-fee-collector.json --fee-bps 10`
 - Withdraw platform fees (per mint):
   - `scripts/escrowctl.sh fees-balance --solana-rpc-url <rpc> --mint <mint>`
   - `scripts/escrowctl.sh fees-withdraw --solana-rpc-url <rpc> --solana-keypair onchain/.../platform-fee-collector.json --mint <mint> --amount 0`
@@ -1562,11 +1562,11 @@ Solana escrow program (shared program id per cluster):
 # mkdir -p onchain/solana/program
 # scripts/solprogctl.sh deploy --rpc-url <rpc> --payer <keypair> --program-keypair onchain/solana/program/ln_usdt_escrow-keypair.json --upgrade-authority <keypair>
 
-# Initialize platform fee config once per cluster (example: 0.5% = 50 bps).
-scripts/escrowctl.sh config-init --solana-rpc-url <rpc> --solana-keypair onchain/solana/keypairs/swap-platform-fee-collector.json --fee-bps 50
+# Initialize platform fee config once per cluster (fixed: 0.1% = 10 bps).
+scripts/escrowctl.sh config-init --solana-rpc-url <rpc> --solana-keypair onchain/solana/keypairs/swap-platform-fee-collector.json
 
-# Initialize trade fee config for the desired trade-fee receiver (example: 0.5% = 50 bps).
-scripts/escrowctl.sh trade-config-init --solana-rpc-url <rpc> --solana-keypair onchain/solana/keypairs/swap-trade-fee-collector.json --fee-bps 50
+# Initialize trade fee config for the desired trade-fee receiver (default: 0.1% = 10 bps).
+scripts/escrowctl.sh trade-config-init --solana-rpc-url <rpc> --solana-keypair onchain/solana/keypairs/swap-trade-fee-collector.json --fee-bps 10
 
 # Confirm config:
 scripts/escrowctl.sh config-get --solana-rpc-url <rpc>

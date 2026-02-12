@@ -109,6 +109,8 @@ test('swap schema: rfq + quote validate', async () => {
       app_hash: APP_HASH,
       btc_sats: 1000,
       usdt_amount: '1000000',
+      offer_id: 'a'.repeat(64),
+      offer_line_index: 0,
       platform_fee_bps: 50,
       trade_fee_bps: 50,
       trade_fee_collector: '11111111111111111111111111111111',
@@ -135,6 +137,25 @@ test('swap schema: rfq + quote validate', async () => {
     nonce: 'q2',
   });
   assert.equal(validateSwapEnvelope(quoteMissingExpiry).ok, false);
+
+  const quoteMissingOfferLine = createUnsignedEnvelope({
+    v: 1,
+    kind: KIND.QUOTE,
+    tradeId: 'quote_3',
+    body: {
+      rfq_id: rfqId,
+      pair: PAIR.BTC_LN__USDT_SOL,
+      direction: `${ASSET.BTC_LN}->${ASSET.USDT_SOL}`,
+      app_hash: APP_HASH,
+      btc_sats: 1000,
+      usdt_amount: '1000000',
+      offer_id: 'b'.repeat(64),
+      valid_until_unix: nowSec + 30,
+    },
+    ts: Date.now(),
+    nonce: 'q3',
+  });
+  assert.equal(validateSwapEnvelope(quoteMissingOfferLine).ok, false);
 });
 
 test('swap schema: quote_accept + swap_invite validate', async () => {

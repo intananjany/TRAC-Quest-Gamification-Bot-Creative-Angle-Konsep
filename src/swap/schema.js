@@ -182,6 +182,17 @@ export function validateSwapBody(kind, body) {
       if (!isHex(body.app_hash, 32)) return { ok: false, error: 'quote.app_hash must be 32-byte hex' };
       if (!isAmountString(body.usdt_amount)) return { ok: false, error: 'quote.usdt_amount must be a decimal string' };
       if (!isPosInt(body.btc_sats)) return { ok: false, error: 'quote.btc_sats must be a positive integer' };
+      const hasOfferId = body.offer_id !== undefined && body.offer_id !== null;
+      const hasOfferLineIndex = body.offer_line_index !== undefined && body.offer_line_index !== null;
+      if (hasOfferId && !isHex(body.offer_id, 32)) {
+        return { ok: false, error: 'quote.offer_id must be 32-byte hex' };
+      }
+      if (hasOfferLineIndex && !isUint(body.offer_line_index)) {
+        return { ok: false, error: 'quote.offer_line_index must be an integer >= 0' };
+      }
+      if (hasOfferId !== hasOfferLineIndex) {
+        return { ok: false, error: 'quote.offer_id and quote.offer_line_index must be provided together' };
+      }
       // Optional fee preview (pre-filtering only; binding fees are in TERMS).
       if (body.platform_fee_bps !== undefined && body.platform_fee_bps !== null) {
         if (!isUint(body.platform_fee_bps)) {

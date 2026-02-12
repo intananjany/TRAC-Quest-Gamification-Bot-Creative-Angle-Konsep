@@ -583,13 +583,13 @@ Prefer `rfqbotmgr` for tool-call operation: stop/restart individual bot instance
 | Command | What it does | Flags |
 |---|---|---|
 | `config-get` | Read platform config | none |
-| `config-init` | Initialize platform fee config | `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
-| `config-set` | Update platform fee config | `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
+| `config-init` | Initialize platform fee config (fixed `10` bps / 0.1%) | optional: `--fee-collector <pubkey>`, `--simulate 0|1`, `--fee-bps 10` |
+| `config-set` | Update platform fee collector (fee stays fixed at `10` bps / 0.1%) | optional: `--fee-collector <pubkey>`, `--simulate 0|1`, `--fee-bps 10` |
 | `fees-balance` | Platform fee vault balance | `--mint <pubkey>` |
 | `fees-withdraw` | Withdraw platform fees | `--mint <pubkey>`; optional: `--amount <u64>`, `--create-ata 0|1`, `--simulate 0|1` |
 | `trade-config-get` | Read trade fee config | `--fee-collector <pubkey>` |
-| `trade-config-init` | Initialize trade fee config | `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
-| `trade-config-set` | Update trade fee config | `--fee-bps <n>`; optional: `--fee-collector <pubkey>`, `--simulate 0|1` |
+| `trade-config-init` | Initialize trade fee config (default `10` bps / 0.1% when omitted) | optional: `--fee-bps <n>`, `--fee-collector <pubkey>`, `--simulate 0|1` |
+| `trade-config-set` | Update trade fee config (default `10` bps / 0.1% when omitted) | optional: `--fee-bps <n>`, `--fee-collector <pubkey>`, `--simulate 0|1` |
 | `trade-fees-balance` | Trade fee vault balance | `--fee-collector <pubkey> --mint <pubkey>` |
 | `trade-fees-withdraw` | Withdraw trade fees (for the signer fee collector) | `--mint <pubkey>`; optional: `--amount <u64>`, `--create-ata 0|1`, `--simulate 0|1` |
 | `escrow-get` | Inspect escrow state | `--payment-hash <hex32>` |

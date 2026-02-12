@@ -12,7 +12,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { stableStringify } from '../util/stableStringify.js';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const LEGACY_RFV_CHANNEL_COL = ['o', 't', 'c'].join('') + '_channel';
 
@@ -45,22 +45,62 @@ function listTradeColumns(db) {
   return cols;
 }
 
+function listListingLockColumns(db) {
+  const cols = new Set();
+  try {
+    for (const row of db.prepare('PRAGMA table_info(listing_locks)').all()) {
+      if (row?.name) cols.add(String(row.name));
+    }
+  } catch (_e) {}
+  return cols;
+}
+
+function ensureListingLocksTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS listing_locks(
+      listing_key TEXT PRIMARY KEY,
+      listing_type TEXT NOT NULL,
+      listing_id TEXT NOT NULL,
+      trade_id TEXT,
+      state TEXT NOT NULL,
+      note TEXT,
+      meta_json TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_listing_locks_trade ON listing_locks(trade_id, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_listing_locks_state ON listing_locks(state, updated_at DESC);
+  `);
+}
+
 function migrateSchema(db) {
-  const current = readSchemaVersion(db);
+  let current = readSchemaVersion(db);
   if (current === null) {
     writeSchemaVersion(db, SCHEMA_VERSION);
     return;
   }
 
-  if (current === SCHEMA_VERSION) return;
-
-  // v1 -> v2: rename legacy trades channel column -> trades.rfq_channel
-  if (current === 1 && SCHEMA_VERSION === 2) {
+  if (current === 1) {
+    // v1 -> v2: rename legacy trades channel column -> trades.rfq_channel
     const cols = listTradeColumns(db);
     if (cols.has(LEGACY_RFV_CHANNEL_COL) && !cols.has('rfq_channel')) {
       db.exec(`ALTER TABLE trades RENAME COLUMN ${LEGACY_RFV_CHANNEL_COL} TO rfq_channel;`);
     }
-    writeSchemaVersion(db, SCHEMA_VERSION);
+    current = 2;
+    writeSchemaVersion(db, current);
+  }
+
+  if (current === 2) {
+    // v2 -> v3: add listing_locks table for deterministic listing lifecycle guards.
+    ensureListingLocksTable(db);
+    current = 3;
+    writeSchemaVersion(db, current);
+  }
+
+  if (current === SCHEMA_VERSION) {
+    if (!listListingLockColumns(db).has('listing_key')) {
+      ensureListingLocksTable(db);
+    }
     return;
   }
 
@@ -146,6 +186,21 @@ function mapRow(row) {
   };
 }
 
+function mapListingLockRow(row) {
+  if (!row) return null;
+  return {
+    listing_key: row.listing_key,
+    listing_type: row.listing_type,
+    listing_id: row.listing_id,
+    trade_id: row.trade_id,
+    state: row.state,
+    note: row.note,
+    meta_json: row.meta_json,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
 export class TradeReceiptsStore {
   constructor(db, dbPath) {
     this.db = db;
@@ -169,6 +224,28 @@ export class TradeReceiptsStore {
     this._stmtInsertEvent = db.prepare(
       'INSERT INTO events(trade_id, ts, kind, payload_json) VALUES(?, ?, ?, ?)'
     );
+
+    this._stmtGetListingLock = db.prepare('SELECT * FROM listing_locks WHERE listing_key = ?');
+    this._stmtListListingLocksByTrade = db.prepare(
+      'SELECT * FROM listing_locks WHERE trade_id = ? ORDER BY updated_at DESC LIMIT ?'
+    );
+    this._stmtDeleteListingLock = db.prepare('DELETE FROM listing_locks WHERE listing_key = ?');
+    this._stmtDeleteListingLocksByTrade = db.prepare('DELETE FROM listing_locks WHERE trade_id = ?');
+    this._stmtUpsertListingLock = db.prepare(`
+      INSERT INTO listing_locks(
+        listing_key, listing_type, listing_id, trade_id, state, note, meta_json, created_at, updated_at
+      )
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(listing_key) DO UPDATE SET
+        listing_type=excluded.listing_type,
+        listing_id=excluded.listing_id,
+        trade_id=excluded.trade_id,
+        state=excluded.state,
+        note=excluded.note,
+        meta_json=excluded.meta_json,
+        created_at=listing_locks.created_at,
+        updated_at=excluded.updated_at
+    `);
 
     // Full-row upsert (we merge with existing first, then write the full row).
     this._stmtUpsertTrade = db.prepare(`
@@ -266,6 +343,8 @@ export class TradeReceiptsStore {
 
       CREATE INDEX IF NOT EXISTS idx_events_trade_ts ON events(trade_id, ts);
     `);
+
+    ensureListingLocksTable(db);
 
     migrateSchema(db);
     return new TradeReceiptsStore(db, resolved);
@@ -397,6 +476,75 @@ export class TradeReceiptsStore {
     const t = ts === null || ts === undefined ? nowMs() : coerceInt(ts);
     const payloadJson = payload === null || payload === undefined ? null : coerceJson(payload);
     this._stmtInsertEvent.run(id, t, k, payloadJson);
+  }
+
+  getListingLock(listingKey) {
+    const key = String(listingKey || '').trim();
+    if (!key) throw new Error('listingKey is required');
+    return mapListingLockRow(this._stmtGetListingLock.get(key));
+  }
+
+  listListingLocksByTrade(tradeId, { limit = 500 } = {}) {
+    const id = String(tradeId || '').trim();
+    if (!id) throw new Error('tradeId is required');
+    const n = Number.isFinite(limit) ? Math.max(1, Math.min(2000, Math.trunc(limit))) : 500;
+    return this._stmtListListingLocksByTrade.all(id, n).map(mapListingLockRow);
+  }
+
+  upsertListingLock(listingKey, patch = {}) {
+    const key = String(listingKey || '').trim();
+    if (!key) throw new Error('listingKey is required');
+    const existing = this.getListingLock(key);
+    const base = existing || { listing_key: key, created_at: nowMs(), updated_at: nowMs() };
+    const next = { ...base, updated_at: nowMs() };
+    for (const [k, v] of Object.entries(patch || {})) {
+      if (v === undefined) continue;
+      next[k] = v;
+    }
+    const state = String(next.state || '').trim().toLowerCase();
+    if (state !== 'in_flight' && state !== 'filled') {
+      throw new Error('listing lock state must be in_flight or filled');
+    }
+    const row = {
+      listing_key: key,
+      listing_type: coerceText(next.listing_type),
+      listing_id: coerceText(next.listing_id),
+      trade_id: coerceText(next.trade_id),
+      state,
+      note: coerceText(next.note),
+      meta_json: coerceJson(next.meta_json),
+      created_at: coerceInt(next.created_at),
+      updated_at: coerceInt(next.updated_at),
+    };
+    if (!isNonEmptyString(row.listing_type)) throw new Error('listing_type is required');
+    if (!isNonEmptyString(row.listing_id)) throw new Error('listing_id is required');
+    for (const k of Object.keys(row)) {
+      if (row[k] === undefined) row[k] = null;
+    }
+    this._stmtUpsertListingLock.run(
+      row.listing_key,
+      row.listing_type,
+      row.listing_id,
+      row.trade_id,
+      row.state,
+      row.note,
+      row.meta_json,
+      row.created_at,
+      row.updated_at
+    );
+    return this.getListingLock(key);
+  }
+
+  deleteListingLock(listingKey) {
+    const key = String(listingKey || '').trim();
+    if (!key) throw new Error('listingKey is required');
+    this._stmtDeleteListingLock.run(key);
+  }
+
+  deleteListingLocksByTrade(tradeId) {
+    const id = String(tradeId || '').trim();
+    if (!id) throw new Error('tradeId is required');
+    this._stmtDeleteListingLocksByTrade.run(id);
   }
 }
 
