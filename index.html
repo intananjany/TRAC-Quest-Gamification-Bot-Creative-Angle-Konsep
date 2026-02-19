@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TRAC Quest — Daily Missions</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #050a0e;
+    --panel: #0a1520;
+    --border: #1a3a5c;
+    --accent: #00d4ff;
+    --accent2: #ff6b00;
+    --gold: #ffd700;
+    --green: #00ff88;
+    --text: #c8e0f0;
+    --dim: #4a6a8a;
+    --glow: 0 0 20px rgba(0,212,255,0.4);
+    --glow2: 0 0 20px rgba(255,107,0,0.4);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Animated grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: 
+      linear-gradient(rgba(0,212,255,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+    animation: gridScroll 20s linear infinite;
+  }
+
+  @keyframes gridScroll {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(40px); }
+  }
+
+  /* Scanline effect */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.15) 2px,
+      rgba(0,0,0,0.15) 4px
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .container {
+    position: relative;
+    z-index: 2;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+  }
+
+  /* HEADER */
+  header {
+    text-align: center;
+    padding: 40px 0 30px;
+  }
+
+  .logo-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin-bottom: 8px;
+  }
+
+  .logo-icon {
+    width: 48px;
+    height: 48px;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: 18px;
+    color: var(--accent);
+    box-shadow: var(--glow), inset 0 0 10px rgba(0,212,255,0.1);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { box-shadow: var(--glow), inset 0 0 10px rgba(0,212,255,0.1); }
+    50% { box-shadow: 0 0 40px rgba(0,212,255,0.7), inset 0 0 20px rgba(0,212,255,0.2); }
+  }
+
+  h1 {
+    font-family: 'Orbitron', sans-serif;
+    font-size: clamp(24px, 5vw, 42px);
+    font-weight: 900;
+    letter-spacing: 6px;
+    color: var(--accent);
+    text-shadow: var(--glow);
+  }
+
+  .subtitle {
+    color: var(--dim);
+    font-size: 12px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    margin-top: 6px;
+  }
+
+  /* STATUS BAR */
+  .status-bar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 30px 0;
+  }
+
+  .stat-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 16px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s;
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  }
+
+  .stat-card:hover { border-color: var(--accent); }
+
+  .stat-label {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .stat-value {
+    font-family: 'Orbitron', sans-serif;
+    font-size: clamp(18px, 3vw, 28px);
+    font-weight: 700;
+    color: var(--gold);
+    text-shadow: 0 0 15px rgba(255,215,0,0.5);
+  }
+
+  .stat-value.points { color: var(--accent); text-shadow: var(--glow); }
+  .stat-value.streak { color: var(--accent2); text-shadow: var(--glow2); }
+
+  /* XP BAR */
+  .xp-section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+  }
+
+  .xp-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--dim);
+    letter-spacing: 2px;
+    margin-bottom: 10px;
+  }
+
+  .xp-bar-bg {
+    background: rgba(0,0,0,0.5);
+    border-radius: 2px;
+    height: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+
+  .xp-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, #00d4ff, #00ff88);
+    box-shadow: 0 0 10px rgba(0,212,255,0.6);
+    transition: width 1s ease;
+    position: relative;
+  }
+
+  .xp-bar-fill::after {
+    content: '';
+    position: absolute;
+    right: 0; top: 0;
+    width: 4px; height: 100%;
+    background: white;
+    filter: blur(2px);
+    animation: xpFlicker 0.5s ease-in-out infinite alternate;
+  }
+
+  @keyframes xpFlicker {
+    from { opacity: 0.5; }
+    to { opacity: 1; }
+  }
+
+  /* QUEST AREA */
+  .section-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 11px;
+    letter-spacing: 5px;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, var(--border), transparent);
+  }
+
+  /* CHAT INTERFACE */
+  .chat-container {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+
+  .chat-header {
+    background: rgba(0,212,255,0.05);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    letter-spacing: 3px;
+    color: var(--accent);
+  }
+
+  .agent-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: blink 1s step-end infinite;
+  }
+
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+
+  .chat-messages {
+    padding: 20px;
+    min-height: 280px;
+    max-height: 380px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .chat-messages::-webkit-scrollbar { width: 4px; }
+  .chat-messages::-webkit-scrollbar-track { background: transparent; }
+  .chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .msg {
+    max-width: 82%;
+    animation: msgIn 0.3s ease forwards;
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  @keyframes msgIn {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .msg.agent { align-self: flex-start; }
+  .msg.user { align-self: flex-end; }
+
+  .msg-label {
+    font-size: 9px;
+    letter-spacing: 3px;
+    color: var(--dim);
+    margin-bottom: 4px;
+  }
+
+  .msg.user .msg-label { text-align: right; }
+
+  .msg-bubble {
+    padding: 12px 16px;
+    border-radius: 2px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .msg.agent .msg-bubble {
+    background: rgba(0,212,255,0.07);
+    border: 1px solid rgba(0,212,255,0.2);
+    border-left: 3px solid var(--accent);
+    color: var(--text);
+  }
+
+  .msg.user .msg-bubble {
+    background: rgba(255,107,0,0.07);
+    border: 1px solid rgba(255,107,0,0.2);
+    border-right: 3px solid var(--accent2);
+    color: var(--text);
+    text-align: right;
+  }
+
+  .msg-bubble .highlight {
+    color: var(--accent);
+    font-weight: bold;
+  }
+
+  .msg-bubble .reward {
+    color: var(--gold);
+    font-weight: bold;
+  }
+
+  /* QUEST BUTTONS */
+  .quest-actions {
+    padding: 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .quest-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 1px;
+    padding: 8px 14px;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex: 1;
+    min-width: 140px;
+    text-align: center;
+  }
+
+  .quest-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: var(--glow);
+    background: rgba(0,212,255,0.05);
+  }
+
+  .quest-btn.primary {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(0,212,255,0.05);
+  }
+
+  .quest-btn.primary:hover {
+    background: rgba(0,212,255,0.15);
+    box-shadow: 0 0 30px rgba(0,212,255,0.3);
+  }
+
+  .quest-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    border-color: var(--dim);
+    color: var(--dim);
+  }
+
+  /* QUESTS LIST */
+  .quests-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+
+  .quest-item {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    transition: all 0.3s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .quest-item.completed {
+    border-color: rgba(0,255,136,0.3);
+    background: rgba(0,255,136,0.03);
+  }
+
+  .quest-item.completed::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, rgba(0,255,136,0.05), transparent);
+  }
+
+  .quest-item:hover:not(.completed) {
+    border-color: var(--accent);
+    transform: translateX(4px);
+  }
+
+  .quest-icon {
+    font-size: 24px;
+    width: 40px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .quest-info { flex: 1; }
+
+  .quest-name {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+    letter-spacing: 1px;
+  }
+
+  .quest-desc {
+    font-size: 11px;
+    color: var(--dim);
+    letter-spacing: 1px;
+  }
+
+  .quest-reward {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--gold);
+    text-shadow: 0 0 10px rgba(255,215,0,0.4);
+    flex-shrink: 0;
+  }
+
+  .quest-check {
+    width: 24px; height: 24px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    flex-shrink: 0;
+    transition: all 0.3s;
+  }
+
+  .quest-item.completed .quest-check {
+    border-color: var(--green);
+    color: var(--green);
+    background: rgba(0,255,136,0.1);
+    box-shadow: 0 0 10px rgba(0,255,136,0.3);
+  }
+
+  /* LEADERBOARD */
+  .leaderboard {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+
+  .lb-header {
+    background: rgba(255,215,0,0.05);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--gold);
+    letter-spacing: 3px;
+  }
+
+  .lb-row {
+    display: grid;
+    grid-template-columns: 40px 1fr auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    border-bottom: 1px solid rgba(26,58,92,0.5);
+    transition: background 0.2s;
+  }
+
+  .lb-row:hover { background: rgba(0,212,255,0.03); }
+  .lb-row:last-child { border-bottom: none; }
+
+  .lb-row.you {
+    background: rgba(0,212,255,0.07);
+    border-left: 3px solid var(--accent);
+  }
+
+  .lb-rank {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .lb-rank.r1 { color: var(--gold); }
+  .lb-rank.r2 { color: #c0c0c0; }
+  .lb-rank.r3 { color: #cd7f32; }
+  .lb-rank.rn { color: var(--dim); }
+
+  .lb-name { font-size: 13px; color: var(--text); }
+  .lb-name .tag { color: var(--dim); font-size: 11px; }
+
+  .lb-pts {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  /* WALLET SECTION */
+  .wallet-section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+
+  .wallet-input-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .wallet-input {
+    flex: 1;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    padding: 10px 14px;
+    border-radius: 2px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .wallet-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 10px rgba(0,212,255,0.2);
+  }
+
+  .wallet-input::placeholder { color: var(--dim); }
+
+  .save-btn {
+    background: rgba(0,212,255,0.1);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 2px;
+    padding: 10px 16px;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .save-btn:hover {
+    background: rgba(0,212,255,0.2);
+    box-shadow: var(--glow);
+  }
+
+  .wallet-display {
+    margin-top: 10px;
+    font-size: 11px;
+    color: var(--dim);
+    word-break: break-all;
+  }
+
+  .wallet-display span { color: var(--accent); }
+
+  /* NOTIFICATIONS */
+  #notif {
+    position: fixed;
+    top: 20px; right: 20px;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .notif-item {
+    background: var(--panel);
+    border: 1px solid var(--green);
+    border-left: 4px solid var(--green);
+    border-radius: 4px;
+    padding: 12px 16px;
+    font-size: 12px;
+    color: var(--green);
+    box-shadow: 0 0 20px rgba(0,255,136,0.2);
+    animation: notifIn 0.3s ease, notifOut 0.3s ease 2.7s forwards;
+    max-width: 280px;
+  }
+
+  @keyframes notifIn {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes notifOut {
+    to { opacity: 0; transform: translateX(20px); }
+  }
+
+  /* FOOTER */
+  footer {
+    text-align: center;
+    padding: 30px 0;
+    font-size: 10px;
+    color: var(--dim);
+    letter-spacing: 2px;
+    border-top: 1px solid var(--border);
+  }
+
+  footer a { color: var(--accent); text-decoration: none; }
+
+  /* TYPING ANIMATION */
+  .typing {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding: 4px 0;
+  }
+
+  .typing span {
+    width: 6px; height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: typing 1s ease-in-out infinite;
+  }
+
+  .typing span:nth-child(2) { animation-delay: 0.2s; }
+  .typing span:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes typing {
+    0%, 100% { opacity: 0.2; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1.2); }
+  }
+
+  @media (max-width: 600px) {
+    .status-bar { grid-template-columns: repeat(3, 1fr); }
+    .stat-card { padding: 10px 8px; }
+    .stat-value { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="notif"></div>
+
+<div class="container">
+  <!-- HEADER -->
+  <header>
+    <div class="logo-line">
+      <div class="logo-icon">T</div>
+      <h1>TRAC QUEST</h1>
+      <div class="logo-icon">Q</div>
+    </div>
+    <p class="subtitle">Daily Mission System · Powered by Intercom P2P</p>
+  </header>
+
+  <!-- WALLET -->
+  <div class="wallet-section">
+    <div class="section-title">⬡ Your TRAC Wallet</div>
+    <div class="wallet-input-row">
+      <input type="text" class="wallet-input" id="walletInput" placeholder="Enter your TRAC address (bc1q... or tb1q...)">
+      <button class="save-btn" onclick="saveWallet()">LINK WALLET</button>
+    </div>
+    <div class="wallet-display" id="walletDisplay">No wallet linked · Link wallet to start earning</div>
+  </div>
+
+  <!-- STATS -->
+  <div class="status-bar">
+    <div class="stat-card">
+      <div class="stat-label">Total Points</div>
+      <div class="stat-value points" id="totalPoints">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Day Streak</div>
+      <div class="stat-value streak" id="streakDays">0 🔥</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Rank Level</div>
+      <div class="stat-value" id="rankLevel">RECRUIT</div>
+    </div>
+  </div>
+
+  <!-- XP BAR -->
+  <div class="xp-section">
+    <div class="xp-header">
+      <span>RANK PROGRESS</span>
+      <span id="xpText">0 / 500 XP</span>
+    </div>
+    <div class="xp-bar-bg">
+      <div class="xp-bar-fill" id="xpBar" style="width: 0%"></div>
+    </div>
+  </div>
+
+  <!-- QUEST BOT -->
+  <div class="section-title">⬡ Quest Agent</div>
+  <div class="chat-container">
+    <div class="chat-header">
+      <div class="agent-dot"></div>
+      AGENT_TRAC · INTERCOM P2P · ONLINE
+    </div>
+    <div class="chat-messages" id="chatMessages">
+      <div class="msg agent">
+        <div class="msg-label">AGENT_TRAC</div>
+        <div class="msg-bubble">
+          Initializing TRAC Quest Protocol...<br>
+          <span class="highlight">[ SYSTEM READY ]</span><br><br>
+          Welcome, Agent. Daily quests reset every 24 hours.<br>
+          Complete quests to earn <span class="reward">TNK points</span> and climb the leaderboard.<br><br>
+          Type a command or use the buttons below to begin.
+        </div>
+      </div>
+    </div>
+    <div class="quest-actions">
+      <button class="quest-btn primary" onclick="sendCommand('start quest')">⚡ Start Quest</button>
+      <button class="quest-btn" onclick="sendCommand('check in')">📅 Daily Check-in</button>
+      <button class="quest-btn" onclick="sendCommand('leaderboard')">🏆 Leaderboard</button>
+      <button class="quest-btn" onclick="sendCommand('my status')">📊 My Status</button>
+    </div>
+  </div>
+
+  <!-- DAILY QUESTS -->
+  <div class="section-title">⬡ Daily Quests</div>
+  <div class="quests-grid" id="questsGrid">
+    <!-- Populated by JS -->
+  </div>
+
+  <!-- LEADERBOARD -->
+  <div class="section-title">⬡ Global Leaderboard</div>
+  <div class="leaderboard">
+    <div class="lb-header">
+      <span>RANK · AGENT</span>
+      <span>POINTS</span>
+    </div>
+    <div id="leaderboardBody">
+      <!-- Populated by JS -->
+    </div>
+  </div>
+
+  <footer>
+    Built on <a href="https://github.com/Trac-Systems/intercom" target="_blank">Intercom P2P</a> · 
+    Fork of <a href="https://github.com/Trac-Systems/intercom" target="_blank">Trac-Systems/intercom</a> · 
+    TRAC Quest v1.0
+  </footer>
+</div>
+
+<script>
+// ── STATE ──────────────────────────────────────────────────────────────
+const state = {
+  points: 0,
+  streak: 0,
+  checkedIn: false,
+  wallet: '',
+  quests: [
+    { id: 1, name: 'DAILY CHECK-IN', desc: 'Check in once per day to keep your streak', reward: 50, icon: '📅', done: false, key: 'checkin' },
+    { id: 2, name: 'SEND A MESSAGE', desc: 'Send any message via TRAC Quest agent', reward: 30, icon: '💬', done: false, key: 'message' },
+    { id: 3, name: 'LINK WALLET', desc: 'Connect your TRAC wallet address', reward: 75, icon: '🔗', done: false, key: 'wallet' },
+    { id: 4, name: 'EXPLORE QUESTS', desc: 'View the leaderboard via agent command', reward: 25, icon: '🗺️', done: false, key: 'explore' },
+    { id: 5, name: 'STREAK WARRIOR', desc: 'Maintain a 3-day check-in streak', reward: 150, icon: '🔥', done: false, key: 'streak3' },
+  ],
+  leaderboard: [
+    { name: 'SatoshiWalker', tag: '#4291', pts: 4850, you: false },
+    { name: 'TracHunter_X', tag: '#0077', pts: 3920, you: false },
+    { name: 'BlockchainBex', tag: '#1337', pts: 2780, you: false },
+    { name: 'MoonAgent99', tag: '#8842', pts: 1540, you: false },
+    { name: 'You', tag: '#----', pts: 0, you: true },
+  ]
+};
+
+const ranks = [
+  { name: 'RECRUIT', min: 0, max: 500 },
+  { name: 'SCOUT', min: 500, max: 1500 },
+  { name: 'AGENT', min: 1500, max: 3000 },
+  { name: 'OPERATIVE', min: 3000, max: 6000 },
+  { name: 'ELITE', min: 6000, max: Infinity },
+];
+
+// ── INIT ───────────────────────────────────────────────────────────────
+function init() {
+  const saved = localStorage.getItem('tracquest');
+  if (saved) {
+    const data = JSON.parse(saved);
+    state.points = data.points || 0;
+    state.streak = data.streak || 0;
+    state.checkedIn = data.checkedIn || false;
+    state.wallet = data.wallet || '';
+    if (data.quests) {
+      data.quests.forEach(sq => {
+        const q = state.quests.find(x => x.id === sq.id);
+        if (q) q.done = sq.done;
+      });
+    }
+    // Reset check-in if new day
+    const lastDate = data.lastDate;
+    const today = new Date().toDateString();
+    if (lastDate !== today) {
+      state.checkedIn = false;
+      const qi = state.quests.find(q => q.key === 'checkin');
+      if (qi) qi.done = false;
+    }
+  }
+  if (state.wallet) {
+    state.quests.find(q => q.key === 'wallet').done = true;
+  }
+  renderAll();
+}
+
+function save() {
+  localStorage.setItem('tracquest', JSON.stringify({
+    points: state.points,
+    streak: state.streak,
+    checkedIn: state.checkedIn,
+    wallet: state.wallet,
+    quests: state.quests.map(q => ({ id: q.id, done: q.done })),
+    lastDate: new Date().toDateString(),
+  }));
+}
+
+// ── RENDER ─────────────────────────────────────────────────────────────
+function renderAll() {
+  renderStats();
+  renderQuests();
+  renderLeaderboard();
+  if (state.wallet) {
+    document.getElementById('walletInput').value = state.wallet;
+    document.getElementById('walletDisplay').innerHTML = `Linked: <span>${state.wallet.slice(0,12)}...${state.wallet.slice(-6)}</span>`;
+  }
+}
+
+function renderStats() {
+  document.getElementById('totalPoints').textContent = state.points.toLocaleString();
+  document.getElementById('streakDays').textContent = state.streak + (state.streak >= 3 ? ' 🔥' : ' 🔥');
+
+  const rank = ranks.find(r => state.points >= r.min && state.points < r.max) || ranks[ranks.length-1];
+  document.getElementById('rankLevel').textContent = rank.name;
+
+  const pct = Math.min(100, ((state.points - rank.min) / (rank.max - rank.min)) * 100);
+  document.getElementById('xpBar').style.width = pct + '%';
+  document.getElementById('xpText').textContent = `${state.points} / ${rank.max === Infinity ? '∞' : rank.max} XP`;
+
+  // Update leaderboard entry
+  const you = state.leaderboard.find(x => x.you);
+  if (you) you.pts = state.points;
+  state.leaderboard.sort((a, b) => b.pts - a.pts);
+}
+
+function renderQuests() {
+  const grid = document.getElementById('questsGrid');
+  grid.innerHTML = state.quests.map(q => `
+    <div class="quest-item ${q.done ? 'completed' : ''}" onclick="${q.done ? '' : `completeQuest(${q.id})`}" style="cursor:${q.done ? 'default' : 'pointer'}">
+      <div class="quest-icon">${q.icon}</div>
+      <div class="quest-info">
+        <div class="quest-name">${q.name}</div>
+        <div class="quest-desc">${q.desc}</div>
+      </div>
+      <div class="quest-reward">+${q.reward}</div>
+      <div class="quest-check">${q.done ? '✓' : ''}</div>
+    </div>
+  `).join('');
+}
+
+function renderLeaderboard() {
+  const body = document.getElementById('leaderboardBody');
+  const rankClass = (i) => ['r1','r2','r3','rn','rn'][Math.min(i,4)];
+  const medal = (i) => ['🥇','🥈','🥉','#4','#5'][Math.min(i,4)];
+  body.innerHTML = state.leaderboard.map((p, i) => `
+    <div class="lb-row ${p.you ? 'you' : ''}">
+      <div class="lb-rank ${rankClass(i)}">${medal(i)}</div>
+      <div class="lb-name">${p.name} <span class="tag">${p.tag}</span>${p.you ? ' <span style="color:var(--accent);font-size:10px;">[YOU]</span>' : ''}</div>
+      <div class="lb-pts">${p.pts.toLocaleString()} pts</div>
+    </div>
+  `).join('');
+}
+
+// ── QUEST LOGIC ────────────────────────────────────────────────────────
+function completeQuest(id) {
+  const q = state.quests.find(x => x.id === id);
+  if (!q || q.done) return;
+
+  // Special conditions
+  if (q.key === 'checkin' && !state.checkedIn) {
+    addChat('user', 'Complete daily check-in');
+    doCheckin();
+    return;
+  }
+  if (q.key === 'wallet' && !state.wallet) {
+    addChat('user', 'Link wallet');
+    setTimeout(() => addChat('agent', '→ Enter your TRAC address in the wallet section above and click <span class="highlight">LINK WALLET</span>.'), 500);
+    return;
+  }
+  if (q.key === 'streak3' && state.streak < 3) {
+    addChat('user', 'Check streak status');
+    setTimeout(() => addChat('agent', `Your current streak is <span class="highlight">${state.streak} day(s)</span>. You need a <span class="reward">3-day streak</span> to claim this reward. Keep checking in daily!`), 500);
+    return;
+  }
+
+  earnPoints(q.reward, q.name);
+  q.done = true;
+  save();
+  renderAll();
+}
+
+function doCheckin() {
+  if (state.checkedIn) {
+    setTimeout(() => addChat('agent', 'You already checked in today. Come back tomorrow to continue your streak!'), 500);
+    return;
+  }
+  state.checkedIn = true;
+  state.streak += 1;
+  const q = state.quests.find(x => x.key === 'checkin');
+  q.done = true;
+
+  // Check streak quest
+  if (state.streak >= 3) {
+    const sq = state.quests.find(x => x.key === 'streak3');
+    if (!sq.done) {
+      sq.done = true;
+      earnPoints(sq.reward, 'STREAK WARRIOR');
+    }
+  }
+
+  earnPoints(q.reward, 'DAILY CHECK-IN');
+  save();
+  renderAll();
+
+  setTimeout(() => {
+    addChat('agent', `
+      ✅ Check-in confirmed!<br>
+      Streak: <span class="highlight">${state.streak} day(s) 🔥</span><br>
+      Reward: <span class="reward">+${q.reward} TNK points</span><br><br>
+      ${state.streak >= 3 ? '🎉 STREAK WARRIOR bonus unlocked!' : `Keep going — ${3 - state.streak} more day(s) for STREAK WARRIOR bonus!`}
+    `);
+  }, 600);
+}
+
+function earnPoints(amount, questName) {
+  state.points += amount;
+  showNotif(`+${amount} pts — ${questName}`);
+}
+
+// ── CHAT ───────────────────────────────────────────────────────────────
+function addChat(role, text) {
+  const msgs = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = `msg ${role === 'agent' ? 'agent' : 'user'}`;
+  div.innerHTML = `
+    <div class="msg-label">${role === 'agent' ? 'AGENT_TRAC' : 'YOU'}</div>
+    <div class="msg-bubble">${text}</div>
+  `;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function showTyping(cb) {
+  const msgs = document.getElementById('chatMessages');
+  const div = document.createElement('div');
+  div.className = 'msg agent';
+  div.id = 'typingIndicator';
+  div.innerHTML = `<div class="msg-label">AGENT_TRAC</div><div class="msg-bubble"><div class="typing"><span></span><span></span><span></span></div></div>`;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  setTimeout(() => {
+    const t = document.getElementById('typingIndicator');
+    if (t) t.remove();
+    cb();
+  }, 900);
+}
+
+function sendCommand(cmd) {
+  // Mark message quest
+  const mq = state.quests.find(q => q.key === 'message');
+  if (mq && !mq.done) {
+    mq.done = true;
+    earnPoints(mq.reward, 'SEND A MESSAGE');
+    save();
+    renderAll();
+  }
+
+  // Mark explore quest
+  if (cmd === 'leaderboard') {
+    const eq = state.quests.find(q => q.key === 'explore');
+    if (eq && !eq.done) {
+      eq.done = true;
+      earnPoints(eq.reward, 'EXPLORE QUESTS');
+      save();
+      renderAll();
+    }
+  }
+
+  addChat('user', cmd.toUpperCase());
+
+  showTyping(() => {
+    const responses = {
+      'start quest': `<span class="highlight">[ QUEST PROTOCOL INITIATED ]</span><br><br>
+        Today's quests are now active. Complete them to earn <span class="reward">TNK points</span>.<br><br>
+        Your current total: <span class="highlight">${state.points} pts</span><br>
+        Active quests: <span class="reward">${state.quests.filter(q => !q.done).length} remaining</span>`,
+
+      'check in': null, // handled separately
+
+      'leaderboard': `<span class="highlight">[ LEADERBOARD SYNC ]</span><br><br>
+        🥇 SatoshiWalker — <span class="reward">4,850 pts</span><br>
+        🥈 TracHunter_X — <span class="reward">3,920 pts</span><br>
+        🥉 BlockchainBex — <span class="reward">2,780 pts</span><br>
+        #4 MoonAgent99 — <span class="reward">1,540 pts</span><br><br>
+        Your rank: <span class="highlight">#${state.leaderboard.findIndex(x => x.you) + 1}</span> with <span class="reward">${state.points} pts</span>`,
+
+      'my status': `<span class="highlight">[ AGENT STATUS ]</span><br><br>
+        Points: <span class="reward">${state.points.toLocaleString()}</span><br>
+        Streak: <span class="highlight">${state.streak} day(s) 🔥</span><br>
+        Rank: <span class="reward">${ranks.find(r => state.points >= r.min && state.points < r.max)?.name || 'ELITE'}</span><br>
+        Wallet: <span class="highlight">${state.wallet ? state.wallet.slice(0,10)+'...' : 'Not linked'}</span><br>
+        Quests done: <span class="reward">${state.quests.filter(q => q.done).length}/${state.quests.length}</span>`,
+    };
+
+    if (cmd === 'check in') {
+      doCheckin();
+    } else {
+      addChat('agent', responses[cmd] || `<span class="highlight">Command received:</span> ${cmd.toUpperCase()}<br>Processing via Intercom P2P network...`);
+    }
+  });
+}
+
+// ── WALLET ─────────────────────────────────────────────────────────────
+function saveWallet() {
+  const val = document.getElementById('walletInput').value.trim();
+  if (!val) { showNotif('Please enter a TRAC address', true); return; }
+  state.wallet = val;
+  document.getElementById('walletDisplay').innerHTML = `Linked: <span>${val.slice(0,12)}...${val.slice(-6)}</span>`;
+
+  const q = state.quests.find(q => q.key === 'wallet');
+  if (!q.done) {
+    q.done = true;
+    earnPoints(q.reward, 'LINK WALLET');
+  }
+
+  save();
+  renderAll();
+  showNotif('Wallet linked successfully!');
+
+  addChat('agent', `✅ TRAC address linked!<br>Address: <span class="highlight">${val.slice(0,12)}...${val.slice(-6)}</span><br>Reward: <span class="reward">+75 TNK points</span>`);
+}
+
+// ── NOTIFICATIONS ───────────────────────────────────────────────────────
+function showNotif(text, err = false) {
+  const container = document.getElementById('notif');
+  const el = document.createElement('div');
+  el.className = 'notif-item';
+  if (err) el.style.borderColor = 'var(--accent2)';
+  el.textContent = (err ? '⚠ ' : '✓ ') + text;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// ── START ──────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
